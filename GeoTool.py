@@ -1,11 +1,19 @@
 
 from shapely.geometry import JOIN_STYLE, MultiPolygon, Polygon
-import geopandas as gpd
 import numpy as np
-from shapely.geometry import Polygon, MultiPolygon, Point, LineString
+from shapely.geometry import Polygon, MultiPolygon, Point, LineString, MultiLineString
+from shapely.ops import linemerge
 from scipy.spatial import Delaunay
+import networkx as nx
+from shapely.geometry import LineString, Point
+import geopandas as gpd
+import pandas as pd
+import matplotlib.pyplot as plt
+import momepy
+from shapely.ops import snap
 
-def create_split_gdf(buildings: gpd.GeoDataFrame, hull: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+
+def create_split_gdf(buildings: gpd.GeoDataFrame, hull: gpd.GeoDataFrame,tolerance =10) -> gpd.GeoDataFrame:
     """
     对给定范围（hull）内的建筑进行缓冲和合并，生成街道分割用的多边形图层。
 
@@ -35,16 +43,16 @@ def create_split_gdf(buildings: gpd.GeoDataFrame, hull: gpd.GeoDataFrame) -> gpd
     merged_geometry = buildings_buffered_7m.geometry.unary_union
 
     if isinstance(merged_geometry, MultiPolygon):
-        polygons = list(merged_geometry.geoms)
+        polygons = [geom.simplify(tolerance=tolerance, preserve_topology=True) for geom in merged_geometry.geoms]
     elif isinstance(merged_geometry, Polygon):
-        polygons = [merged_geometry]
+        polygons = [merged_geometry.simplify(tolerance=tolerance, preserve_topology=True)]
     else:
         raise ValueError("Unexpected geometry type")
 
     # 第四步：创建 GeoDataFrame
     split_gdf = gpd.GeoDataFrame(geometry=polygons, crs=buildings.crs)
 
-    return split_gdf
+    return split_gdf, buildings_in_hull
 
 def compute_circumcenter(p1, p2, p3):
     A = np.array(p1)
@@ -141,8 +149,7 @@ def extract_skeleton_from_enclosure(buildings_in, enclosure_geom, spacing):
     # Step 5：转为 GeoDataFrame 输出
     return gpd.GeoDataFrame(geometry=lines, crs=buildings_in.crs)
 
-import networkx as nx
-from shapely.geometry import LineString, Point
+
 def clean_skeleton_network(skeleton_gdf, min_length):
     """
     输入为初步骨架线 GeoDataFrame，输出为简化的、干净的“道路骨架网络”
@@ -198,70 +205,33 @@ def angle_between(p1, p2, p3):
     cos_theta = np.clip(cos_theta, -1.0, 1.0)
     return np.degrees(np.arccos(cos_theta))
 
-def merge_zigzag_segments(skeleton_gdf, angle_threshold):
+def merge_zigzag_segments(skeleton_gdf, epsilon=100):
     """
-    将由短线段组成的 zigzag 骨架线合并成方向稳定的长直线
+    替代 merge_zigzag_segments：先合并骨架为整体线形，再简化曲折线段。
+
+    参数:
+        skeleton_gdf: GeoDataFrame，输入骨架线段
+        epsilon: 简化公差（越大线越直）
+
+    返回:
+        simplified_gdf: GeoDataFrame，合并并简化后的骨架线段
     """
-    edge_geom_map = {}  # 记录每条边对应的原始线段
-    G = nx.Graph()
-    for line in skeleton_gdf.geometry:
-        coords = list(line.coords)
-        for i in range(len(coords) - 1):
-            p1 = tuple(np.round(coords[i], 3))
-            p2 = tuple(np.round(coords[i+1], 3))
-            G.add_edge(p1, p2)
-            edge_geom_map[frozenset([p1, p2])] = LineString([p1, p2])
+    # 合并线段为一条或多条连续线
+    merged_line = linemerge(MultiLineString(skeleton_gdf.geometry.values))
 
-    merged_lines = []
-    used_edges = set()
+    # 构造 GeoSeries
+    merged_series = gpd.GeoSeries([merged_line], crs=skeleton_gdf.crs)
 
-    for component in nx.connected_components(G):
-        subG = G.subgraph(component)
-        deg = dict(subG.degree())
-        endpoints = [n for n in subG.nodes if deg[n] == 1]
+    # 简化几何
+    simplified_geom = merged_series.apply(lambda geom: geom.simplify(epsilon, preserve_topology=False))
 
-        if len(endpoints) < 2:
-            continue
+    # 转为 GeoDataFrame 返回
+    simplified_gdf = gpd.GeoDataFrame(geometry=simplified_geom, crs=skeleton_gdf.crs)
 
-        try:
-            path = nx.shortest_path(subG, source=endpoints[0], target=endpoints[1])
-        except:
-            continue
-
-        # 分段拟合：当角度变化过大就断开
-        segment = [path[0], path[1]]
-        for i in range(2, len(path)):
-            angle = angle_between(path[i - 2], path[i - 1], path[i])
-            if angle < (180 - angle_threshold):
-                if len(segment) >= 2:
-                    merged_lines.append(LineString([segment[0], segment[-1]]))
-                    for j in range(len(segment) - 1):
-                        used_edges.add(frozenset([segment[j], segment[j + 1]]))
-                segment = [path[i - 1], path[i]]
-            else:
-                segment.append(path[i])
-
-        if len(segment) >= 2:
-            merged_lines.append(LineString([segment[0], segment[-1]]))
-            for j in range(len(segment) - 1):
-                used_edges.add(frozenset([segment[j], segment[j + 1]]))
-
-    # 补回未被处理的原始线段
-    remaining_edges = [
-        geom for edge, geom in edge_geom_map.items()
-        if edge not in used_edges
-    ]
-    merged_lines.extend(remaining_edges)
-
-    return gpd.GeoDataFrame(geometry=merged_lines, crs=skeleton_gdf.crs)
+    return simplified_gdf
 
 
-import geopandas as gpd
-import pandas as pd
-import matplotlib.pyplot as plt
-
-
-def generate_skeletons_from_buildings(buildings, enclosures, plot=True):
+def generate_skeletons_from_buildings(buildings, enclosures,spacing,min_length ,epsilon,plot=True):
     """
     对每个enclosure提取建筑骨架，并返回三种版本的GeoDataFrame：raw, clean, total。
 
@@ -288,9 +258,9 @@ def generate_skeletons_from_buildings(buildings, enclosures, plot=True):
             continue
 
         # 提取骨架
-        skel_raw = extract_skeleton_from_enclosure(inside, enclosure_geom, 50)
-        skel_clean = clean_skeleton_network(skel_raw, 5)
-        skel_straight = merge_zigzag_segments(skel_clean, 30)
+        skel_raw = extract_skeleton_from_enclosure(inside, enclosure_geom,spacing)
+        skel_clean = clean_skeleton_network(skel_raw,min_length)
+        skel_straight = merge_zigzag_segments(skel_clean,epsilon)
 
         # 添加到列表
         all_skeletons_raw.append(skel_raw)
@@ -306,8 +276,94 @@ def generate_skeletons_from_buildings(buildings, enclosures, plot=True):
     if plot:
         ax = enclosures.plot(edgecolor="black", facecolor="none", figsize=(15, 15))
         buildings.plot(ax=ax, color="black")
-        skeleton_total.plot(ax=ax, color="blue", linewidth=0.8)
+
+        skeleton_raw.plot(ax=ax, color="grey", linewidth=0.8)
+        skeleton_clean.plot(ax=ax, color="blue", linewidth=0.8)
+        skeleton_total.plot(ax=ax, color="red", linewidth=0.8)
         plt.title("Skeleton Extraction from Enclosures")
         plt.show()
 
     return skeleton_raw, skeleton_clean, skeleton_total
+
+
+def plot_extended_road_closure(buildings, roads, skeleton_total, enclosures, convex_hull, crs_epsg=32650):
+    """
+    绘制道路延伸合并图，包含原始道路、骨架线、闭合区域和凸包边界。
+
+    参数：
+        buildings: GeoDataFrame, 建筑数据
+        roads: GeoDataFrame, 原始道路网络
+        skeleton_total: GeoDataFrame, 所有街区合并后的骨架线
+        enclosures: GeoDataFrame, 包围区域（用于坐标系统一）
+        convex_hull: shapely Polygon or MultiPolygon, 用于裁剪范围
+        crs_epsg: int, 投影坐标系 EPSG（默认32650）
+    """
+
+    # 凸包转 Polygon，再转为 GeoDataFrame
+    hull_polygon = Polygon(convex_hull.boundary)
+    hull = gpd.GeoDataFrame(geometry=[hull_polygon], crs=f"EPSG:{crs_epsg}")
+    hull = hull.to_crs(epsg=crs_epsg)
+
+    # 投影转换
+    roads_proj = roads.to_crs(epsg=crs_epsg)
+    enclosures_proj = enclosures.to_crs(epsg=crs_epsg)
+    skeleton_proj = skeleton_total.to_crs(epsg=crs_epsg)
+    buildings_proj = buildings.to_crs(epsg=crs_epsg)
+
+    # 合并道路线与骨架线
+    all_roads = gpd.GeoDataFrame(
+        pd.concat([roads_proj, skeleton_proj,hull.geometry], ignore_index=True),
+        crs=f"EPSG:{crs_epsg}"
+    )
+
+    # 使用 momepy 进行道路延伸
+    closed = momepy.extend_lines(all_roads, tolerance=800)
+
+    # 可视化
+    fig, ax = plt.subplots(figsize=(15, 15))
+    closed.plot(ax=ax, color="red", linewidth=1)
+    hull.boundary.plot(ax=ax, color="black", linewidth=1)
+    buildings_proj.plot(ax=ax, color="black")
+    roads_proj.plot(ax=ax, color="grey", linewidth=0.8)
+    plt.title("Extended Road + Buildings + Convex Hull Boundary")
+    plt.axis("equal")
+    plt.show()
+    return closed
+
+
+def safe_linemerge(lines):
+    merged = linemerge(MultiLineString(lines))
+    if isinstance(merged, LineString):
+        return [merged]
+    elif isinstance(merged, MultiLineString):
+        return list(merged.geoms)
+    else:
+        return []  # fallback
+
+def merge_lines(*gdfs):
+    """
+    将多个 GeoDataFrame 中的线要素合并并转换为 NetworkX 无向图。
+
+    参数：
+        *gdfs: 多个 GeoDataFrame，要求其 geometry 为 LineString 或 MultiLineString
+
+    返回：
+        G: NetworkX Graph 对象
+    """
+    tolerance = 5
+    # 合并所有线段
+    combined = gpd.GeoDataFrame(pd.concat(gdfs, ignore_index=True), crs=gdfs[0].crs)
+    lines = [geom for geom in combined.geometry if geom is not None]
+
+    # 使用 linemerge 前，先 snap 所有线段首尾点，增强连接性
+    snapped_lines = []
+    for i in range(len(lines)):
+        base = lines[i]
+        for j in range(i + 1, len(lines)):
+            base = snap(base, lines[j], tolerance)
+        snapped_lines.append(base)
+
+    merged = safe_linemerge(snapped_lines)
+
+
+    return merged
