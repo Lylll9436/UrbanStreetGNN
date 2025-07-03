@@ -26,7 +26,7 @@ def create_split_gdf(buildings: gpd.GeoDataFrame, hull: gpd.GeoDataFrame,toleran
     """
     # 只保留在 hull 范围内的建筑
     buildings_in_hull = buildings[buildings.within(hull)].copy()
-    buildings_in_hull.plot()
+    # buildings_in_hull.plot()
     # 第一步：初始缓冲（5 米）
     buildings_buffered_5m = buildings_in_hull.copy()
     buildings_buffered_5m["geometry"] = buildings_buffered_5m.geometry.buffer(
@@ -273,15 +273,15 @@ def generate_skeletons_from_buildings(buildings, enclosures,spacing,min_length ,
     skeleton_total = gpd.GeoDataFrame(pd.concat(all_skeletons, ignore_index=True), crs=buildings.crs)
 
     # 可选：绘图
-    if plot:
-        ax = enclosures.plot(edgecolor="black", facecolor="none", figsize=(15, 15))
-        buildings.plot(ax=ax, color="black")
-
-        skeleton_raw.plot(ax=ax, color="grey", linewidth=0.8)
-        skeleton_clean.plot(ax=ax, color="blue", linewidth=0.8)
-        skeleton_total.plot(ax=ax, color="red", linewidth=0.8)
-        plt.title("Skeleton Extraction from Enclosures")
-        plt.show()
+    # if plot:
+    #     ax = enclosures.plot(edgecolor="black", facecolor="none", figsize=(15, 15))
+    #     buildings.plot(ax=ax, color="black")
+    #
+    #     skeleton_raw.plot(ax=ax, color="grey", linewidth=0.8)
+    #     skeleton_clean.plot(ax=ax, color="blue", linewidth=0.8)
+    #     skeleton_total.plot(ax=ax, color="red", linewidth=0.8)
+    #     plt.title("Skeleton Extraction from Enclosures")
+    #     plt.show()
 
     return skeleton_raw, skeleton_clean, skeleton_total
 
@@ -319,15 +319,15 @@ def plot_extended_road_closure(buildings, roads, skeleton_total, enclosures, con
     # 使用 momepy 进行道路延伸
     closed = momepy.extend_lines(all_roads, tolerance=800)
 
-    # 可视化
-    fig, ax = plt.subplots(figsize=(15, 15))
-    closed.plot(ax=ax, color="red", linewidth=1)
-    hull.boundary.plot(ax=ax, color="black", linewidth=1)
-    buildings_proj.plot(ax=ax, color="black")
-    roads_proj.plot(ax=ax, color="grey", linewidth=0.8)
-    plt.title("Extended Road + Buildings + Convex Hull Boundary")
-    plt.axis("equal")
-    plt.show()
+    # # 可视化
+    # fig, ax = plt.subplots(figsize=(15, 15))
+    # closed.plot(ax=ax, color="red", linewidth=1)
+    # hull.boundary.plot(ax=ax, color="black", linewidth=1)
+    # buildings_proj.plot(ax=ax, color="black")
+    # roads_proj.plot(ax=ax, color="grey", linewidth=0.8)
+    # plt.title("Extended Road + Buildings + Convex Hull Boundary")
+    # plt.axis("equal")
+    # plt.show()
     return closed
 
 
