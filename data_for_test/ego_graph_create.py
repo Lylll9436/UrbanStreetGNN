@@ -53,7 +53,7 @@ class EgoGraphCreator:
     def load_test_roads(self):
         """直接从打断后的文件加载数据"""
         print("正在加载打断后的数据...")
-        self.gdf = gpd.read_file("fixed_roads.shp")
+        self.gdf = gpd.read_file("data_for_test/fixed_roads.shp")
         print(f"加载LineString数量: {len(self.gdf)}")
         
     def create_network_graph(self):
@@ -268,11 +268,12 @@ class EgoGraphCreator:
         
         # 绘制所有道路（灰色）
         print("绘制所有道路...")
+
         for edge in self.graph.edges(data=True):
             geometry = edge[2]['geometry']
             ax.plot(*geometry.xy, color='lightgray', linewidth=0.5, alpha=0.6)
         
-        # 为每个ego-graph绘制黑色加粗路网并添加方框
+        # 为每个ego-graph绘制黑色加粗路网并添加圆形边界
         for i, (ego_graph, selected_footway, graph_id) in enumerate(ego_graphs):
             # 绘制ego-graph范围内的所有边为黑色加粗
             for edge in ego_graph.edges(data=True):
@@ -283,28 +284,23 @@ class EgoGraphCreator:
             selected_geometry = selected_footway[2]['geometry']
             ax.plot(*selected_geometry.xy, color='green', linewidth=5, alpha=1.0, zorder=10)
             
-            # 计算ego-graph的边界框
-            all_coords = []
-            for edge in ego_graph.edges(data=True):
-                geometry = edge[2]['geometry']
-                all_coords.extend(list(geometry.coords))
-            
-            if all_coords:
-                coords_array = np.array(all_coords)
-                min_x, min_y = coords_array.min(axis=0)
-                max_x, max_y = coords_array.max(axis=0)
+            # 计算选中路径的中心点
+            selected_coords = list(selected_geometry.coords)
+            if selected_coords:
+                center_x = sum(coord[0] for coord in selected_coords) / len(selected_coords)
+                center_y = sum(coord[1] for coord in selected_coords) / len(selected_coords)
                 
-                # 绘制方框
-                rect = plt.Rectangle((min_x, min_y), max_x - min_x, max_y - min_y, 
-                                   fill=False, edgecolor='red', linewidth=2, linestyle='--')
-                ax.add_patch(rect)
+                # 绘制250米半径的圆形边界
+                circle = plt.Circle((center_x, center_y), 250, fill=False, edgecolor='red', 
+                                  linewidth=2, linestyle='--')
+                ax.add_patch(circle)
                 
-                # 在方框左上角添加序列标志
-                ax.text(min_x, max_y, str(graph_id), color='red', fontsize=14, fontweight='bold',
-                       ha='left', va='top', zorder=20,
+                # 在圆形边界上方添加序列标志
+                ax.text(center_x, center_y + 250, str(graph_id), color='red', fontsize=14, fontweight='bold',
+                       ha='center', va='bottom', zorder=20,
                        bbox=dict(facecolor='white', edgecolor='red', boxstyle='round,pad=0.3', alpha=0.9))
         
-        ax.set_title(f'南京市道路网络 - {len(ego_graphs)}条随机Footway的500m Buffer EGO-GRAPH\n(绿色为选中的路径，黑色为ego-graph范围，红色方框为边界)', 
+        ax.set_title(f'南京市道路网络 - {len(ego_graphs)}条随机Footway的500m Buffer EGO-GRAPH\n(绿色为选中的路径，黑色为ego-graph范围，红色圆形为250m半径边界)', 
                     fontsize=18, fontweight='bold')
         ax.set_aspect('equal')
         ax.grid(True, alpha=0.3)
@@ -313,7 +309,7 @@ class EgoGraphCreator:
             plt.Line2D([0], [0], color='lightgray', linewidth=2, label='其他道路'),
             plt.Line2D([0], [0], color='black', linewidth=3, label='EGO-GRAPH范围'),
             plt.Line2D([0], [0], color='green', linewidth=5, label='选中的路径'),
-            plt.Line2D([0], [0], color='red', linewidth=2, linestyle='--', label='边界框')
+            plt.Line2D([0], [0], color='red', linewidth=2, linestyle='--', label='250m半径边界')
         ]
         ax.legend(handles=legend_elements, loc='upper right', fontsize=14)
         
@@ -364,12 +360,12 @@ def smart_main():
     """智能主函数：自动检测fixed_roads.shp是否存在，决定是否重新创建"""
     
     # 检查fixed_roads.shp是否存在
-    if os.path.exists("fixed_roads.shp"):
+    if os.path.exists("data_for_test/fixed_roads.shp"):
         print("✓ 检测到 fixed_roads.shp 文件，直接使用现有数据")
         print("=" * 50)
         
         # 使用现有的fixed_roads.shp
-        creator = EgoGraphCreator("fixed_roads.shp")
+        creator = EgoGraphCreator("data_for_test/fixed_roads.shp")
         creator.load_test_roads()
         
     else:
