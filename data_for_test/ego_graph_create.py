@@ -13,6 +13,45 @@ from tqdm import tqdm
 from sklearn.cluster import DBSCAN
 from collections import defaultdict
 
+# ==================== 超参数配置 ====================
+# 文件路径配置
+CONFIG = {
+    # 输入文件路径
+    'input_roads_file': 'data_for_test/roads_meters.shp',  # 原始道路数据
+    'fixed_roads_file': 'data_for_test/fixed_roads.shp',        # 修复后的道路数据
+    'split_roads_file': 'data_for_test/split_roads.shp',        # 打断后的道路数据
+    
+    # 输出目录配置
+    'output_dir': 'data_for_test/ego_graph_results',            # ego-graph结果输出目录
+    
+    # 坐标系配置
+    'source_crs': 'EPSG:4326',                                  # 源坐标系 (WGS84)
+    'target_crs': 'EPSG:32650',                                 # 目标坐标系 (UTM 50N)
+    
+    # ego-graph参数
+    'num_samples': 10,                                          # 采样数量
+    'buffer_distance': 250,                                     # buffer距离(米)
+    
+    # 可视化参数
+    'figure_size': (24, 18),                                    # 图片大小
+    'dpi': 300,                                                 # 图片分辨率
+}
+
+# ==================== 坐标系转换函数 ====================
+def convert_to_utm(gdf, target_crs=None):
+    """将地理坐标系转换为UTM坐标系"""
+    if target_crs is None:
+        target_crs = CONFIG['target_crs']
+    
+    if gdf.crs.is_geographic:
+        print(f"正在将坐标系从 {gdf.crs} 转换为 {target_crs}")
+        gdf_utm = gdf.to_crs(target_crs)
+        print(f"坐标系转换完成")
+        return gdf_utm
+    else:
+        print(f"数据已经是投影坐标系: {gdf.crs}")
+        return gdf
+
 class EgoGraphCreator:
     def __init__(self, shp_file):
         self.shp_file = shp_file
@@ -23,6 +62,9 @@ class EgoGraphCreator:
         """加载数据并打断LineString"""
         print("正在加载数据...")
         self.gdf = gpd.read_file(self.shp_file)
+        
+        # 转换为UTM坐标系
+        self.gdf = convert_to_utm(self.gdf)
         
         # 只保留LineString类型
         self.gdf = self.gdf[self.gdf.geometry.geom_type == 'LineString']
@@ -47,13 +89,17 @@ class EgoGraphCreator:
         print(f"打断后LineString数量: {len(self.gdf)}")
         
         # 保存打断后的数据
-        self.gdf.to_file("split_roads.shp")
-        print("打断后的数据已保存为: split_roads.shp")
+        self.gdf.to_file(CONFIG['split_roads_file'])
+        print(f"打断后的数据已保存为: {CONFIG['split_roads_file']}")
         
     def load_test_roads(self):
         """直接从打断后的文件加载数据"""
         print("正在加载打断后的数据...")
-        self.gdf = gpd.read_file("data_for_test/fixed_roads.shp")
+        self.gdf = gpd.read_file(CONFIG['fixed_roads_file'])
+        
+        # 转换为UTM坐标系
+        self.gdf = convert_to_utm(self.gdf)
+        
         print(f"加载LineString数量: {len(self.gdf)}")
         
     def create_network_graph(self):
@@ -81,8 +127,13 @@ class EgoGraphCreator:
                             length=row.get('length', line.length),
                             original_idx=idx)
 
-    def find_footway_ego_graphs(self, num_samples=30, buffer_distance=250):
-        """找到多个footway的ego-graph（基于500m的直径的 buffer）"""
+    def find_footway_ego_graphs(self, num_samples=None, buffer_distance=None):
+        """找到多个footway的ego-graph（基于buffer距离）"""
+        if num_samples is None:
+            num_samples = CONFIG['num_samples']
+        if buffer_distance is None:
+            buffer_distance = CONFIG['buffer_distance']
+            
         # 找到所有footway
         footways = []
         for edge in self.graph.edges(data=True):
@@ -99,8 +150,8 @@ class EgoGraphCreator:
             # 获取选中的footway几何信息
             selected_geometry = selected_footway[2]['geometry']
             
-            # 创建500m buffer
-            buffer_zone = selected_geometry.buffer(buffer_distance / 111000)  # 转换为度（粗略估算）
+            # 创建buffer (UTM坐标系中直接使用米为单位)
+            buffer_zone = selected_geometry.buffer(buffer_distance)
             
             # 找到在buffer范围内的所有边（而不仅仅是节点）
             ego_edges = set()
@@ -139,8 +190,11 @@ class EgoGraphCreator:
         return ego_graphs
     
     
-    def save_ego_graph_info(self, ego_graphs, output_dir="ego_graph_results"):
+    def save_ego_graph_info(self, ego_graphs, output_dir=None):
         """保存ego-graph的详细信息"""
+        if output_dir is None:
+            output_dir = CONFIG['output_dir']
+            
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
         
@@ -255,7 +309,7 @@ class EgoGraphCreator:
         
         # 保存图片
         plt.savefig(os.path.join(results_dir, f'ego_graph_{graph_id:03d}.png'), 
-                   dpi=300, bbox_inches='tight')
+                   dpi=CONFIG['dpi'], bbox_inches='tight')
         plt.close()
         
         print(f"  EGO-GRAPH {graph_id} 可视化已保存")
@@ -264,14 +318,38 @@ class EgoGraphCreator:
         """在整个城市地图中可视化所有ego-graph"""
         print("正在创建整体可视化...")
         
-        fig, ax = plt.subplots(1, 1, figsize=(24, 18))
+        fig, ax = plt.subplots(1, 1, figsize=CONFIG['figure_size'])
         
-        # 绘制所有道路（灰色）
+        # 绘制所有道路（按等级分类）
         print("绘制所有道路...")
+        
+        # 定义道路等级颜色和线宽
+        highway_colors = {
+            'primary': 'red',
+            'secondary': 'orange', 
+            'tertiary': 'purple',
+            'footway': 'blue'
+        }
+        
+        highway_widths = {
+            'primary': 2,
+            'secondary': 1.5,
+            'tertiary': 1,
+            'footway': 0.5,
+        }
 
         for edge in self.graph.edges(data=True):
             geometry = edge[2]['geometry']
-            ax.plot(*geometry.xy, color='lightgray', linewidth=0.5, alpha=0.6)
+            highway_type = edge[2].get('highway', 'unknown')
+            color = highway_colors.get(highway_type, 'gray')
+            linewidth = highway_widths.get(highway_type, 0.3)
+            ax.plot(*geometry.xy, color=color, linewidth=linewidth, alpha=0.7)
+        
+        # 绘制所有节点
+        print("绘制所有节点...")
+        for node in self.graph.nodes():
+            pos = self.graph.nodes[node]['pos']
+            ax.scatter(pos[0], pos[1], color='black', s=10, alpha=0.6, zorder=5)
         
         # 为每个ego-graph绘制黑色加粗路网并添加圆形边界
         for i, (ego_graph, selected_footway, graph_id) in enumerate(ego_graphs):
@@ -287,36 +365,41 @@ class EgoGraphCreator:
             # 计算选中路径的中心点
             selected_coords = list(selected_geometry.coords)
             if selected_coords:
-                center_x = sum(coord[0] for coord in selected_coords) / len(selected_coords)
-                center_y = sum(coord[1] for coord in selected_coords) / len(selected_coords)
-                
-                # 绘制250米半径的圆形边界
-                circle = plt.Circle((center_x, center_y), 250, fill=False, edgecolor='red', 
-                                  linewidth=2, linestyle='--')
-                ax.add_patch(circle)
-                
-                # 在圆形边界上方添加序列标志
-                ax.text(center_x, center_y + 250, str(graph_id), color='red', fontsize=14, fontweight='bold',
-                       ha='center', va='bottom', zorder=20,
-                       bbox=dict(facecolor='white', edgecolor='red', boxstyle='round,pad=0.3', alpha=0.9))
+                 center_x = sum(coord[0] for coord in selected_coords) / len(selected_coords)
+                 center_y = sum(coord[1] for coord in selected_coords) / len(selected_coords)
+                 
+                 # 绘制250米半径的圆形边界（UTM坐标系中直接使用米）
+                 radius_meters = CONFIG['buffer_distance']
+                 circle = plt.Circle((center_x, center_y), radius_meters, fill=False, edgecolor='red', 
+                                   linewidth=2, linestyle='--')
+                 ax.add_patch(circle)
+                 
+                 # 在圆形边界上方添加序列标志
+                 ax.text(center_x, center_y + radius_meters, str(graph_id), color='red', fontsize=14, fontweight='bold',
+                        ha='center', va='bottom', zorder=20,
+                        bbox=dict(facecolor='white', edgecolor='red', boxstyle='round,pad=0.3', alpha=0.9))
         
-        ax.set_title(f'南京市道路网络 - {len(ego_graphs)}条随机Footway的500m Buffer EGO-GRAPH\n(绿色为选中的路径，黑色为ego-graph范围，红色圆形为250m半径边界)', 
+        ax.set_title(f'南京市道路网络 - {len(ego_graphs)}条随机Footway的{CONFIG["buffer_distance"]}m Buffer EGO-GRAPH\n(按道路等级着色，黑色节点，绿色为选中的路径，红色圆形为{CONFIG["buffer_distance"]}m半径边界)', 
                     fontsize=18, fontweight='bold')
         ax.set_aspect('equal')
         ax.grid(True, alpha=0.3)
         
         legend_elements = [
-            plt.Line2D([0], [0], color='lightgray', linewidth=2, label='其他道路'),
+            plt.Line2D([0], [0], color='red', linewidth=2, label='Primary'),
+            plt.Line2D([0], [0], color='orange', linewidth=1.5, label='Secondary'),
+            plt.Line2D([0], [0], color='purple', linewidth=1, label='Tertiary'),
+            plt.Line2D([0], [0], color='blue', linewidth=0.5, label='Footway'),
             plt.Line2D([0], [0], color='black', linewidth=3, label='EGO-GRAPH范围'),
             plt.Line2D([0], [0], color='green', linewidth=5, label='选中的路径'),
-            plt.Line2D([0], [0], color='red', linewidth=2, linestyle='--', label='250m半径边界')
+            plt.Line2D([0], [0], color='red', linewidth=2, linestyle='--', label=f'{CONFIG["buffer_distance"]}m半径边界'),
+            plt.scatter([], [], color='black', s=50, label='节点')
         ]
         ax.legend(handles=legend_elements, loc='upper right', fontsize=14)
         
         plt.tight_layout()
         
         # 保存图片
-        plt.savefig(os.path.join(results_dir, 'all_ego_graphs_overview.png'), dpi=300, bbox_inches='tight')
+        plt.savefig(os.path.join(results_dir, 'all_ego_graphs_overview.png'), dpi=CONFIG['dpi'], bbox_inches='tight')
         
         # 显示图片
         plt.show()
@@ -355,38 +438,38 @@ class EgoGraphCreator:
             total_edges += ego_graph.number_of_edges()
             total_length += graph_length
 
-# 智能主函数 - 自动检测fixed_roads.shp是否存在
+# 智能主函数 - 自动检测文件是否存在
 def smart_main():
-    """智能主函数：自动检测fixed_roads.shp是否存在，决定是否重新创建"""
+    """智能主函数：自动检测文件是否存在，决定是否重新创建"""
     
     # 检查fixed_roads.shp是否存在
-    if os.path.exists("data_for_test/fixed_roads.shp"):
-        print("✓ 检测到 fixed_roads.shp 文件，直接使用现有数据")
+    if os.path.exists(CONFIG['fixed_roads_file']):
+        print(f"✓ 检测到 {CONFIG['fixed_roads_file']} 文件，直接使用现有数据")
         print("=" * 50)
         
         # 使用现有的fixed_roads.shp
-        creator = EgoGraphCreator("data_for_test/fixed_roads.shp")
+        creator = EgoGraphCreator(CONFIG['fixed_roads_file'])
         creator.load_test_roads()
         
     else:
-        print("✗ 未检测到 fixed_roads.shp 文件，需要重新创建")
+        print(f"✗ 未检测到 {CONFIG['fixed_roads_file']} 文件，需要重新创建")
         print("=" * 50)
         
-        # 检查merged_roads.shp是否存在
-        if not os.path.exists("fixed_roads.shp"):
-            print("错误：未找到 fixed_roads.shp 文件！")
-            print("请先运行数据合并步骤创建 fixed_roads.shp")
+        # 检查input_roads_file是否存在
+        if not os.path.exists(CONFIG['input_roads_file']):
+            print(f"错误：未找到 {CONFIG['input_roads_file']} 文件！")
+            print("请先准备输入数据文件")
             return
         
-        # 创建新的fixed_roads.shp
-        creator = EgoGraphCreator("fixed_roads.shp")
+        # 创建新的数据文件
+        creator = EgoGraphCreator(CONFIG['input_roads_file'])
         creator.load_and_split_linestrings()
     
     # 创建网络图
     creator.create_network_graph()
 
-    # 找到100条footway的ego-graph（基于500m buffer）
-    ego_graphs = creator.find_footway_ego_graphs(num_samples=30, buffer_distance=250)
+    # 生成ego-graph
+    ego_graphs = creator.find_footway_ego_graphs()
     
     # 保存详细信息
     results_dir = creator.save_ego_graph_info(ego_graphs)
