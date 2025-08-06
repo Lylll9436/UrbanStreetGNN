@@ -17,8 +17,8 @@ from collections import defaultdict
 # 文件路径配置
 CONFIG = {
     # 输入文件路径
-    'input_roads_file': 'data_for_test/roads_meters.shp',  # 原始道路数据
-    'fixed_roads_file': 'data_for_test/fixed_roads.shp',        # 修复后的道路数据
+    'input_roads_file': 'roads_meters.shp',  # 原始道路数据
+    'fixed_roads_file': 'fixed_roads.shp',        # 修复后的道路数据
     'split_roads_file': 'data_for_test/split_roads.shp',        # 打断后的道路数据
     
     # 输出目录配置
@@ -29,7 +29,7 @@ CONFIG = {
     'target_crs': 'EPSG:32650',                                 # 目标坐标系 (UTM 50N)
     
     # ego-graph参数
-    'num_samples': 10,                                          # 采样数量
+    'num_samples': 100,                                          # 采样数量
     'buffer_distance': 250,                                     # buffer距离(米)
     
     # 可视化参数
