@@ -1,0 +1,19 @@
+# Ignore large/raw geodata folders
+
+data_for_test/origin_data/
+data_for_test/origin_data_street/
+data_for_test/shp_file/
+DATA_BAIDU/
+
+# Optional: common temp/cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.tmp
+*.log
+
+# IDE/project files (optional)
+.vscode/
+.idea/
+*.ipynb_checkpoints/
