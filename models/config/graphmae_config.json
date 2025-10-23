@@ -1,0 +1,66 @@
+{
+  "model_name": "GraphMAE",
+  "description": "Graph Masked AutoEncoder - 掩码图自编码器",
+  
+  "model": {
+    "node_features": 2,
+    "edge_features": 3,
+    "hidden_dim": 256,
+    "embedding_dim": 128,
+    "num_layers": 3,
+    "dropout": 0.2,
+    "conv_type": "gcn",
+    "mask_ratio": 0.15
+  },
+  
+  "training": {
+    "num_epochs": 100,
+    "learning_rate": 0.001,
+    "weight_decay": 1e-5,
+    "batch_size": 1,
+    "train_ratio": 0.8,
+    "val_ratio": 0.2,
+    "seed": 42,
+    "link_weight": 0.3
+  },
+  
+  "optimizer": {
+    "type": "Adam",
+    "lr_scheduler": "ReduceLROnPlateau",
+    "scheduler_params": {
+      "mode": "min",
+      "factor": 0.5,
+      "patience": 10,
+      "verbose": true
+    }
+  },
+  
+  "loss": {
+    "type": "masked_reconstruction",
+    "description": "特征重建损失 + 链接预测损失",
+    "feature_weight": 1.0,
+    "link_weight": 0.3
+  },
+  
+  "masking": {
+    "strategy": "random",
+    "mask_ratio": 0.15,
+    "mask_node_features": true,
+    "mask_edge_features": false
+  },
+  
+  "evaluation": {
+    "metrics": ["loss", "feature_loss", "link_loss", "auc", "ap", "precision", "accuracy"],
+    "save_best_by": "val_auc"
+  },
+  
+  "paths": {
+    "data": "../data/ego_graphs.pkl",
+    "model_save": "../gnn_models/graphmae_model.pt",
+    "best_model_save": "../gnn_models/best_graphmae_model.pt",
+    "embeddings_save": "../data/graphmae_embeddings.pt",
+    "training_curve": "../outputs/graphmae_training_curves.png",
+    "history_save": "../data/graphmae_training_history.npy"
+  }
+}
+

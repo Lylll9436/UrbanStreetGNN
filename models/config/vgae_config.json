@@ -1,0 +1,62 @@
+{
+  "model_name": "VGAE",
+  "description": "Variational Graph AutoEncoder - 变分图自编码器",
+  
+  "model": {
+    "node_features": 2,
+    "edge_features": 3,
+    "hidden_dim": 256,
+    "embedding_dim": 128,
+    "num_layers": 3,
+    "dropout": 0.2,
+    "conv_type": "gcn"
+  },
+  
+  "training": {
+    "num_epochs": 100,
+    "learning_rate": 0.001,
+    "weight_decay": 1e-5,
+    "batch_size": 1,
+    "train_ratio": 0.8,
+    "val_ratio": 0.2,
+    "seed": 42,
+    "kl_weight": 0.1
+  },
+  
+  "optimizer": {
+    "type": "Adam",
+    "lr_scheduler": "ReduceLROnPlateau",
+    "scheduler_params": {
+      "mode": "min",
+      "factor": 0.5,
+      "patience": 10,
+      "verbose": true
+    }
+  },
+  
+  "loss": {
+    "type": "variational",
+    "description": "重建损失 + KL散度",
+    "kl_annealing": {
+      "enabled": true,
+      "start_weight": 0.01,
+      "end_weight": 0.1,
+      "anneal_epochs": 30
+    }
+  },
+  
+  "evaluation": {
+    "metrics": ["loss", "recon_loss", "kl_loss", "auc", "ap", "precision", "accuracy"],
+    "save_best_by": "val_auc"
+  },
+  
+  "paths": {
+    "data": "../data/ego_graphs.pkl",
+    "model_save": "../gnn_models/vgae_model.pt",
+    "best_model_save": "../gnn_models/best_vgae_model.pt",
+    "embeddings_save": "../data/vgae_embeddings.pt",
+    "training_curve": "../outputs/vgae_training_curves.png",
+    "history_save": "../data/vgae_training_history.npy"
+  }
+}
+

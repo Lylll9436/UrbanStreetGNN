@@ -1,0 +1,55 @@
+{
+  "model_name": "GAE",
+  "description": "Graph AutoEncoder - 基础图自编码器",
+  
+  "model": {
+    "node_features": 2,
+    "edge_features": 3,
+    "hidden_dim": 256,
+    "embedding_dim": 128,
+    "num_layers": 3,
+    "dropout": 0.2,
+    "conv_type": "gcn"
+  },
+  
+  "training": {
+    "num_epochs": 100,
+    "learning_rate": 0.001,
+    "weight_decay": 1e-5,
+    "batch_size": 1,
+    "train_ratio": 0.8,
+    "val_ratio": 0.2,
+    "seed": 42
+  },
+  
+  "optimizer": {
+    "type": "Adam",
+    "lr_scheduler": "ReduceLROnPlateau",
+    "scheduler_params": {
+      "mode": "min",
+      "factor": 0.5,
+      "patience": 10,
+      "verbose": true
+    }
+  },
+  
+  "loss": {
+    "type": "reconstruction",
+    "description": "链接预测重建损失（BCE）"
+  },
+  
+  "evaluation": {
+    "metrics": ["loss", "auc", "ap", "precision", "accuracy"],
+    "save_best_by": "val_auc"
+  },
+  
+  "paths": {
+    "data": "../data/ego_graphs.pkl",
+    "model_save": "../gnn_models/gae_model.pt",
+    "best_model_save": "../gnn_models/best_gae_model.pt",
+    "embeddings_save": "../data/gae_embeddings.pt",
+    "training_curve": "../outputs/gae_training_curves.png",
+    "history_save": "../data/gae_training_history.npy"
+  }
+}
+
