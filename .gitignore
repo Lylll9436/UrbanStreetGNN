@@ -16,4 +16,3 @@ __pycache__/
 # IDE/project files (optional)
 .vscode/
 .idea/
-*.ipynb_checkpoints/
