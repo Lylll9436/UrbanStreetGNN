@@ -11,7 +11,8 @@ from gae_model import create_gae_model
 from vgae_model import create_vgae_model
 from graphmae_model import create_graphmae_model
 from autoencoder_utils import (
-    convert_ego_graphs_to_pytorch,
+    # convert_ego_graphs_to_pytorch,
+    convert_route_graphs_to_pytorch,
     load_config
 )
 
@@ -120,21 +121,21 @@ def main() -> None:
     
     # 加载测试数据
     print("\n📊 加载测试数据...")
-    data_path = "../data/ego_graphs.pkl"
+    data_path = r"D:\Architecture\AAA-Master\25Fall\CAADRIA\UrbanStreetGNN\models\data\route_graphs.pkl"
     
     if not os.path.exists(data_path):
         print(f"❌ 数据文件不存在: {data_path}")
         print("请确保数据文件存在后再运行测试")
         return
     
-    graphs = convert_ego_graphs_to_pytorch(data_path)
+    graphs = convert_route_graphs_to_pytorch(data_path)
     print(f"加载了 {len(graphs)} 个图，使用前5个进行测试")
     test_data = graphs[:5]
     
     # 测试配置
     test_config = {
-        'node_features': 2,
-        'edge_features': 3,
+        'node_features': 9,
+        'edge_features': 2,
         'hidden_dim': 64,  # 减小以加快测试
         'embedding_dim': 32,
         'num_layers': 2,
