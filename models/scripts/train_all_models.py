@@ -19,11 +19,11 @@ def main() -> None:
     print("批量训练图自编码器模型")
     print("="*80)
     print(f"开始时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-    
+    BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     models = [
-        ('GAE', '../config/gae_config.json', train_gae),
-        ('VGAE', '../config/vgae_config.json', train_vgae),
-        ('GraphMAE', '../config/graphmae_config.json', train_graphmae)
+        ('GAE', os.path.join(BASE_DIR, 'config', 'gae_config.json'), train_gae),
+        ('VGAE', os.path.join(BASE_DIR,  'config', 'vgae_config.json'), train_vgae),
+        ('GraphMAE', os.path.join(BASE_DIR,  'config', 'graphmae_config.json'), train_graphmae)
     ]
     
     training_results = {}

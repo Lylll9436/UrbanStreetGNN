@@ -51,7 +51,7 @@
   },
   
   "paths": {
-    "data": "../data/ego_graphs.pkl",
+    "data": "../data/route_graphs.pkl",
     "model_save": "../gnn_models/vgae_model.pt",
     "best_model_save": "../gnn_models/best_vgae_model.pt",
     "embeddings_save": "../data/vgae_embeddings.pt",
