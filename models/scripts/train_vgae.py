@@ -9,6 +9,7 @@ import torch.optim as optim
 import numpy as np
 from datetime import datetime
 from typing import Dict, List, Tuple
+from pathlib import Path
 
 from vgae_model import create_vgae_model
 from autoencoder_utils import (
@@ -305,7 +306,8 @@ def train_vgae(config: Dict) -> None:
 def main() -> None:
     """主函数"""
     # 加载配置
-    config_path = "../config/vgae_config.json"
+    current_dir = Path(__file__).resolve().parent
+    config_path = current_dir / "../config/vgae_config.json"
     config = load_config(config_path)
     
     # 训练模型

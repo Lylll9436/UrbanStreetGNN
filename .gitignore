@@ -16,10 +16,8 @@ __pycache__/
 # IDE/project files (optional)
 .vscode/
 .idea/
-<<<<<<< HEAD
 .serena/
 *.ipynb_checkpoints/
 
+# 本地生成的说明文档
 AGENTS.md
-=======
->>>>>>> 3fcc123c237236385f734397d7354f7bec4636d6

@@ -9,6 +9,7 @@ import torch.optim as optim
 import numpy as np
 from datetime import datetime
 from typing import Dict, List, Tuple
+from pathlib import Path
 
 from gae_model import create_gae_model
 from autoencoder_utils import (
@@ -256,7 +257,8 @@ def train_gae(config: Dict) -> None:
 def main() -> None:
     """主函数"""
     # 加载配置
-    config_path = r"D:\Architecture\AAA-Master\25Fall\CAADRIA\UrbanStreetGNN\models\config\gae_config.json"   
+    current_dir = Path(__file__).resolve().parent
+    config_path = current_dir / "../config/gae_config.json"
     config = load_config(config_path)
     
     # 训练模型

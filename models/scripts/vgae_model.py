@@ -75,7 +75,7 @@ class VGAEEncoder(nn.Module):
         
         # 均值分支
         self.mean_projection = nn.Sequential(
-            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim, embedding_dim)
@@ -83,7 +83,7 @@ class VGAEEncoder(nn.Module):
         
         # 对数方差分支
         self.logvar_projection = nn.Sequential(
-            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim, embedding_dim)
@@ -97,7 +97,7 @@ class VGAEEncoder(nn.Module):
             data: 图数据
             
         Returns:
-            (均值, 对数方差) 每个形状为 [1, embedding_dim]
+            (均值, 对数方差) 形状均为 [num_nodes, embedding_dim]
         """
         x, edge_index = data.x, data.edge_index
         
@@ -110,15 +110,9 @@ class VGAEEncoder(nn.Module):
             h = F.relu(h)
             h = F.dropout(h, p=self.dropout, training=self.training)
         
-        # 图级别pooling
-        batch = torch.zeros(h.size(0), dtype=torch.long, device=h.device)
-        mean_pool = global_mean_pool(h, batch)
-        max_pool = global_max_pool(h, batch)
-        graph_rep = torch.cat([mean_pool, max_pool], dim=1)
-        
-        # 变分层：输出均值和对数方差
-        mu = self.mean_projection(graph_rep)
-        logvar = self.logvar_projection(graph_rep)
+        # 变分层：输出节点级均值和对数方差
+        mu = self.mean_projection(h)
+        logvar = self.logvar_projection(h)
         
         return mu, logvar
 
@@ -127,49 +121,30 @@ class VGAEDecoder(nn.Module):
     """
     VGAE解码器
     
-    从图嵌入重建边连接
+    使用节点级潜变量重建边连接
     """
     
-    def __init__(self, embedding_dim: int, hidden_dim: int = 256):
-        """
-        初始化VGAE解码器
-        
-        Args:
-            embedding_dim: 图嵌入维度
-            hidden_dim: 隐藏层维度
-        """
+    def __init__(self):
         super(VGAEDecoder, self).__init__()
-        
-        self.node_projection = nn.Sequential(
-            nn.Linear(embedding_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim)
-        )
     
     def forward(
         self,
-        z: torch.Tensor,
-        edge_index: torch.Tensor,
-        num_nodes: int
+        node_latent: torch.Tensor,
+        edge_index: torch.Tensor
     ) -> torch.Tensor:
         """
         解码边连接
         
         Args:
-            z: 图嵌入（从潜在分布采样）
+            node_latent: 节点潜变量 [num_nodes, embedding_dim]
             edge_index: 边索引
-            num_nodes: 节点数量
             
         Returns:
             边概率
         """
-        node_embeddings = self.node_projection(z)
-        node_embeddings = node_embeddings.expand(num_nodes, -1)
-        
         row, col = edge_index
-        edge_logits = (node_embeddings[row] * node_embeddings[col]).sum(dim=1)
+        edge_logits = (node_latent[row] * node_latent[col]).sum(dim=1)
         edge_probs = torch.sigmoid(edge_logits)
-        
         return edge_probs
 
 
@@ -214,12 +189,25 @@ class VGAEModel(nn.Module):
             conv_type=conv_type
         )
         
-        self.decoder = VGAEDecoder(
-            embedding_dim=embedding_dim,
-            hidden_dim=hidden_dim
-        )
+        self.decoder = VGAEDecoder()
         
+        self.hidden_dim = hidden_dim
         self.embedding_dim = embedding_dim
+        self.dropout = dropout
+
+        self.graph_projection = nn.Sequential(
+            nn.Linear(embedding_dim * 2, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, embedding_dim)
+        )
+    
+    def _graph_readout(self, node_embeddings: torch.Tensor) -> torch.Tensor:
+        batch = torch.zeros(node_embeddings.size(0), dtype=torch.long, device=node_embeddings.device)
+        mean_pool = global_mean_pool(node_embeddings, batch)
+        max_pool = global_max_pool(node_embeddings, batch)
+        graph_rep = torch.cat([mean_pool, max_pool], dim=1)
+        return self.graph_projection(graph_rep)
     
     def reparameterize(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
         """
@@ -255,7 +243,6 @@ class VGAEModel(nn.Module):
         self,
         z: torch.Tensor,
         edge_index: torch.Tensor,
-        num_nodes: int
     ) -> torch.Tensor:
         """
         从潜在向量解码边
@@ -263,14 +250,13 @@ class VGAEModel(nn.Module):
         Args:
             z: 潜在向量
             edge_index: 边索引
-            num_nodes: 节点数量
             
         Returns:
             边概率
         """
-        return self.decoder(z, edge_index, num_nodes)
+        return self.decoder(z, edge_index)
     
-    def forward(self, data: Data) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, data: Data) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         前向传播
         
@@ -278,11 +264,12 @@ class VGAEModel(nn.Module):
             data: 图数据
             
         Returns:
-            (图嵌入z, 均值mu, 对数方差logvar)
+            (图嵌入, 潜变量z, 均值mu, 对数方差logvar)
         """
         mu, logvar = self.encode(data)
         z = self.reparameterize(mu, logvar)
-        return z, mu, logvar
+        graph_embedding = self._graph_readout(z)
+        return graph_embedding, z, mu, logvar
     
     def kl_loss(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
         """
@@ -324,7 +311,7 @@ class VGAEModel(nn.Module):
         num_nodes = data.x.size(0)
         
         # 解码正样本
-        pos_edge_probs = self.decode(z, pos_edge_index, num_nodes)
+        pos_edge_probs = self.decode(z, pos_edge_index)
         
         # 负采样
         if neg_edge_index is None:
@@ -335,7 +322,7 @@ class VGAEModel(nn.Module):
             )
         
         # 解码负样本
-        neg_edge_probs = self.decode(z, neg_edge_index, num_nodes)
+        neg_edge_probs = self.decode(z, neg_edge_index)
         
         # 二元交叉熵损失
         pos_loss = -torch.log(pos_edge_probs + 1e-15).mean()
@@ -358,7 +345,8 @@ class VGAEModel(nn.Module):
         Returns:
             (总损失, 损失详情字典)
         """
-        z, mu, logvar = self.forward(data)
+        mu, logvar = self.encode(data)
+        z = self.reparameterize(mu, logvar)
         
         recon = self.recon_loss(data, z)
         kl = self.kl_loss(mu, logvar)
@@ -394,10 +382,9 @@ class VGAEModel(nn.Module):
         with torch.no_grad():
             mu, logvar = self.encode(data)
             z = mu  # 测试时使用均值
-            num_nodes = data.x.size(0)
             
-            pos_pred = self.decode(z, pos_edge_index, num_nodes)
-            neg_pred = self.decode(z, neg_edge_index, num_nodes)
+            pos_pred = self.decode(z, pos_edge_index)
+            neg_pred = self.decode(z, neg_edge_index)
         
         return pos_pred, neg_pred
     
@@ -414,7 +401,8 @@ class VGAEModel(nn.Module):
         self.eval()
         with torch.no_grad():
             mu, _ = self.encode(data)
-        return mu
+            embedding = self._graph_readout(mu)
+        return embedding
 
 
 def create_vgae_model(config: Dict) -> VGAEModel:

@@ -17,7 +17,7 @@ class GAEEncoder(nn.Module):
     """
     GAE编码器
     
-    将图结构编码为图级别的embedding向量
+    将节点特征编码为节点级别的隐藏表示
     """
     
     def __init__(
@@ -25,7 +25,6 @@ class GAEEncoder(nn.Module):
         node_features: int,
         edge_features: int,
         hidden_dim: int = 256,
-        embedding_dim: int = 128,
         num_layers: int = 3,
         dropout: float = 0.2,
         conv_type: str = "gcn"
@@ -37,7 +36,6 @@ class GAEEncoder(nn.Module):
             node_features: 节点特征维度
             edge_features: 边特征维度
             hidden_dim: 隐藏层维度
-            embedding_dim: 图嵌入维度
             num_layers: GNN层数
             dropout: Dropout率
             conv_type: 卷积类型 ('gcn', 'gat', 'sage')
@@ -47,7 +45,6 @@ class GAEEncoder(nn.Module):
         self.node_features = node_features
         self.edge_features = edge_features
         self.hidden_dim = hidden_dim
-        self.embedding_dim = embedding_dim
         self.num_layers = num_layers
         self.dropout = dropout
         self.conv_type = conv_type
@@ -72,15 +69,6 @@ class GAEEncoder(nn.Module):
             else:
                 raise ValueError(f"Unsupported conv_type: {conv_type}")
             self.conv_layers.append(conv)
-        
-        # 图级别pooling后的投影层
-        # 使用mean + max pooling，所以输入维度是 2 * hidden_dim
-        self.graph_projection = nn.Sequential(
-            nn.Linear(hidden_dim * 2, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, embedding_dim)
-        )
     
     def forward(self, data: Data) -> torch.Tensor:
         """
@@ -90,7 +78,7 @@ class GAEEncoder(nn.Module):
             data: PyTorch Geometric Data对象
             
         Returns:
-            图嵌入向量 [1, embedding_dim]
+            节点嵌入 [num_nodes, hidden_dim]
         """
         x, edge_index = data.x, data.edge_index
         
@@ -103,75 +91,37 @@ class GAEEncoder(nn.Module):
             h = F.relu(h)
             h = F.dropout(h, p=self.dropout, training=self.training)
         
-        # 图级别pooling
-        # 创建batch张量（单图情况下全为0）
-        batch = torch.zeros(h.size(0), dtype=torch.long, device=h.device)
-        
-        mean_pool = global_mean_pool(h, batch)  # [1, hidden_dim]
-        max_pool = global_max_pool(h, batch)    # [1, hidden_dim]
-        
-        # 合并pooling结果
-        graph_rep = torch.cat([mean_pool, max_pool], dim=1)  # [1, 2*hidden_dim]
-        
-        # 投影到embedding空间
-        graph_embedding = self.graph_projection(graph_rep)  # [1, embedding_dim]
-        
-        return graph_embedding
+        return h
 
 
 class GAEDecoder(nn.Module):
     """
     GAE解码器
     
-    从图嵌入重建边连接（链接预测）
+    使用节点级表示计算边存在概率
     """
     
-    def __init__(self, embedding_dim: int, hidden_dim: int = 256):
-        """
-        初始化GAE解码器
-        
-        Args:
-            embedding_dim: 图嵌入维度
-            hidden_dim: 隐藏层维度
-        """
+    def __init__(self):
         super(GAEDecoder, self).__init__()
-        
-        # 将图embedding投影回节点级别表示
-        self.node_projection = nn.Sequential(
-            nn.Linear(embedding_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim)
-        )
     
     def forward(
         self,
-        graph_embedding: torch.Tensor,
+        node_embeddings: torch.Tensor,
         edge_index: torch.Tensor,
-        num_nodes: int
     ) -> torch.Tensor:
         """
         解码边连接
         
         Args:
-            graph_embedding: 图嵌入 [1, embedding_dim]
+            node_embeddings: 节点嵌入 [num_nodes, hidden_dim]
             edge_index: 边索引 [2, num_edges]
-            num_nodes: 节点数量
             
         Returns:
             边存在概率 [num_edges]
         """
-        # 从图embedding生成节点表示（广播）
-        # 这里简化处理：所有节点共享相同的图级别表示
-        node_embeddings = self.node_projection(graph_embedding)  # [1, hidden_dim]
-        node_embeddings = node_embeddings.expand(num_nodes, -1)  # [num_nodes, hidden_dim]
-        
-        # 内积解码器：计算边两端节点的相似度
         row, col = edge_index
         edge_logits = (node_embeddings[row] * node_embeddings[col]).sum(dim=1)
-        
-        # Sigmoid激活得到概率
         edge_probs = torch.sigmoid(edge_logits)
-        
         return edge_probs
 
 
@@ -210,49 +160,62 @@ class GAEModel(nn.Module):
             node_features=node_features,
             edge_features=edge_features,
             hidden_dim=hidden_dim,
-            embedding_dim=embedding_dim,
             num_layers=num_layers,
             dropout=dropout,
             conv_type=conv_type
         )
-        
-        self.decoder = GAEDecoder(
-            embedding_dim=embedding_dim,
-            hidden_dim=hidden_dim
-        )
-        
+        self.decoder = GAEDecoder()
+
+        self.hidden_dim = hidden_dim
         self.embedding_dim = embedding_dim
+        self.dropout = dropout
+
+        # 图级别读出网络
+        self.graph_projection = nn.Sequential(
+            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, embedding_dim)
+        )
+    
+    def _graph_readout(self, node_embeddings: torch.Tensor) -> torch.Tensor:
+        """
+        将节点嵌入汇聚为图嵌入
+        """
+        batch = torch.zeros(node_embeddings.size(0), dtype=torch.long, device=node_embeddings.device)
+        mean_pool = global_mean_pool(node_embeddings, batch)
+        max_pool = global_max_pool(node_embeddings, batch)
+        graph_rep = torch.cat([mean_pool, max_pool], dim=1)
+        return self.graph_projection(graph_rep)
     
     def encode(self, data: Data) -> torch.Tensor:
         """
-        编码图为embedding
+        编码图为节点级嵌入
         
         Args:
             data: 图数据
             
         Returns:
-            图嵌入 [1, embedding_dim]
+            节点嵌入 [num_nodes, hidden_dim]
         """
         return self.encoder(data)
     
     def decode(
         self,
-        graph_embedding: torch.Tensor,
+        node_embeddings: torch.Tensor,
         edge_index: torch.Tensor,
-        num_nodes: int
     ) -> torch.Tensor:
         """
-        从embedding解码边
+        从节点嵌入解码边
         
         Args:
-            graph_embedding: 图嵌入
+            node_embeddings: 节点嵌入
             edge_index: 边索引
-            num_nodes: 节点数量
             
         Returns:
             边概率
         """
-        return self.decoder(graph_embedding, edge_index, num_nodes)
+        return self.decoder(node_embeddings, edge_index)
     
     def forward(self, data: Data) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -264,11 +227,12 @@ class GAEModel(nn.Module):
         Returns:
             (图嵌入, 正样本边重建概率)
         """
-        # 编码
-        graph_embedding = self.encode(data)
+        # 节点编码
+        node_embeddings = self.encode(data)
+        graph_embedding = self._graph_readout(node_embeddings)
         
         # 解码（重建正样本边）
-        edge_probs = self.decode(graph_embedding, data.edge_index, data.x.size(0))
+        edge_probs = self.decode(node_embeddings, data.edge_index)
         
         return graph_embedding, edge_probs
     
@@ -295,10 +259,10 @@ class GAEModel(nn.Module):
         num_nodes = data.x.size(0)
         
         # 编码
-        graph_embedding = self.encode(data)
+        node_embeddings = self.encode(data)
         
         # 解码正样本
-        pos_edge_probs = self.decode(graph_embedding, pos_edge_index, num_nodes)
+        pos_edge_probs = self.decode(node_embeddings, pos_edge_index)
         
         # 负采样
         if neg_edge_index is None:
@@ -309,7 +273,7 @@ class GAEModel(nn.Module):
             )
         
         # 解码负样本
-        neg_edge_probs = self.decode(graph_embedding, neg_edge_index, num_nodes)
+        neg_edge_probs = self.decode(node_embeddings, neg_edge_index)
         
         # 二元交叉熵损失
         pos_loss = -torch.log(pos_edge_probs + 1e-15).mean()
@@ -338,11 +302,12 @@ class GAEModel(nn.Module):
         """
         self.eval()
         with torch.no_grad():
-            graph_embedding = self.encode(data)
+            node_embeddings = self.encode(data)
+            graph_embedding = self._graph_readout(node_embeddings)
             num_nodes = data.x.size(0)
             
-            pos_pred = self.decode(graph_embedding, pos_edge_index, num_nodes)
-            neg_pred = self.decode(graph_embedding, neg_edge_index, num_nodes)
+            pos_pred = self.decode(node_embeddings, pos_edge_index)
+            neg_pred = self.decode(node_embeddings, neg_edge_index)
         
         return pos_pred, neg_pred
     
@@ -358,7 +323,8 @@ class GAEModel(nn.Module):
         """
         self.eval()
         with torch.no_grad():
-            embedding = self.encode(data)
+            node_embeddings = self.encode(data)
+            embedding = self._graph_readout(node_embeddings)
         return embedding
 
 

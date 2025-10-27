@@ -1,6 +1,6 @@
 {
-  "node_features": 2,
-  "edge_features": 3,
+  "node_features": 9,
+  "edge_features": 2,
   "hidden_dim": 256,
   "embedding_dim": 128,
   "num_layers": 3,

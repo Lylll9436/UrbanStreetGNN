@@ -223,7 +223,7 @@ class GraphMAEModel(nn.Module):
         
         # 链接预测解码器（用于评估）
         self.link_decoder = nn.Sequential(
-            nn.Linear(embedding_dim, hidden_dim),
+            nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim)
         )
@@ -274,26 +274,23 @@ class GraphMAEModel(nn.Module):
     
     def decode_links(
         self,
-        graph_embedding: torch.Tensor,
+        node_embeddings: torch.Tensor,
         edge_index: torch.Tensor,
-        num_nodes: int
     ) -> torch.Tensor:
         """
         解码链接（用于评估）
         
         Args:
-            graph_embedding: 图嵌入
+            node_embeddings: 节点嵌入
             edge_index: 边索引
-            num_nodes: 节点数量
             
         Returns:
             边概率
         """
-        node_embeddings = self.link_decoder(graph_embedding)
-        node_embeddings = node_embeddings.expand(num_nodes, -1)
+        projected = self.link_decoder(node_embeddings)
         
         row, col = edge_index
-        edge_logits = (node_embeddings[row] * node_embeddings[col]).sum(dim=1)
+        edge_logits = (projected[row] * projected[col]).sum(dim=1)
         edge_probs = torch.sigmoid(edge_logits)
         
         return edge_probs
@@ -358,7 +355,7 @@ class GraphMAEModel(nn.Module):
     def link_recon_loss(
         self,
         data: Data,
-        graph_embedding: torch.Tensor,
+        node_embeddings: torch.Tensor,
         pos_edge_index: Optional[torch.Tensor] = None,
         neg_edge_index: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
@@ -367,7 +364,7 @@ class GraphMAEModel(nn.Module):
         
         Args:
             data: 图数据
-            graph_embedding: 图嵌入
+            node_embeddings: 节点嵌入
             pos_edge_index: 正样本边
             neg_edge_index: 负样本边
             
@@ -377,21 +374,19 @@ class GraphMAEModel(nn.Module):
         if pos_edge_index is None:
             pos_edge_index = data.edge_index
         
-        num_nodes = data.x.size(0)
-        
         # 解码正样本
-        pos_edge_probs = self.decode_links(graph_embedding, pos_edge_index, num_nodes)
+        pos_edge_probs = self.decode_links(node_embeddings, pos_edge_index)
         
         # 负采样
         if neg_edge_index is None:
             neg_edge_index = negative_sampling(
                 edge_index=pos_edge_index,
-                num_nodes=num_nodes,
+                num_nodes=data.x.size(0),
                 num_neg_samples=pos_edge_index.size(1)
             )
         
         # 解码负样本
-        neg_edge_probs = self.decode_links(graph_embedding, neg_edge_index, num_nodes)
+        neg_edge_probs = self.decode_links(node_embeddings, neg_edge_index)
         
         # BCE损失
         pos_loss = -torch.log(pos_edge_probs + 1e-15).mean()
@@ -420,7 +415,7 @@ class GraphMAEModel(nn.Module):
         feature_loss = self.feature_recon_loss(data, reconstructed_features, mask_nodes)
         
         # 链接重建损失
-        link_loss = self.link_recon_loss(data, graph_embedding)
+        link_loss = self.link_recon_loss(data, node_embeddings)
         
         total_loss = feature_loss + link_weight * link_loss
         
@@ -451,11 +446,10 @@ class GraphMAEModel(nn.Module):
         """
         self.eval()
         with torch.no_grad():
-            graph_embedding, _, _, _ = self.forward(data, use_mask=False)
-            num_nodes = data.x.size(0)
+            _, node_embeddings, _, _ = self.forward(data, use_mask=False)
             
-            pos_pred = self.decode_links(graph_embedding, pos_edge_index, num_nodes)
-            neg_pred = self.decode_links(graph_embedding, neg_edge_index, num_nodes)
+            pos_pred = self.decode_links(node_embeddings, pos_edge_index)
+            neg_pred = self.decode_links(node_embeddings, neg_edge_index)
         
         return pos_pred, neg_pred
     

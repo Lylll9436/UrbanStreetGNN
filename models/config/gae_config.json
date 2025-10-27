@@ -44,12 +44,12 @@
   },
   
   "paths": {
-    "data": "D:/Architecture/AAA-Master/25Fall/CAADRIA/UrbanStreetGNN/models/data/route_graphs.pkl",
-    "model_save": "D:/Architecture/AAA-Master/25Fall/CAADRIA/UrbanStreetGNN/models/gnn_models/gae_model.pt",
-    "best_model_save": "D:/Architecture/AAA-Master/25Fall/CAADRIA/UrbanStreetGNN/models/gnn_models/best_gae_model.pt",
-    "embeddings_save": "D:/Architecture/AAA-Master/25Fall/CAADRIA/UrbanStreetGNN/models/data/gae_embeddings.pt",
-    "training_curve": "D:/Architecture/AAA-Master/25Fall/CAADRIA/UrbanStreetGNN/models/outputs/gae_training_curves.png",
-    "history_save": "D:/Architecture/AAA-Master/25Fall/CAADRIA/UrbanStreetGNN/models/data/gae_training_history.npy"
+    "data": "../data/ego_graphs.pkl",
+    "model_save": "../gnn_models/gae_model.pt",
+    "best_model_save": "../gnn_models/best_gae_model.pt",
+    "embeddings_save": "../data/gae_embeddings.pt",
+    "training_curve": "../outputs/gae_training_curves.png",
+    "history_save": "../data/gae_training_history.npy"
   }
 }
 

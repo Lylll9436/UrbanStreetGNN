@@ -4,6 +4,7 @@
 """
 
 import pickle
+import sys
 import torch
 import torch.nn.functional as F
 from torch_geometric.data import Data
@@ -13,7 +14,33 @@ import networkx as nx
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import Dict, List, Tuple, Optional
+from pathlib import Path
 from sklearn.metrics import roc_auc_score, average_precision_score, precision_score, accuracy_score
+
+
+def _render_progress(description: str, current: int, total: int, bar_length: int = 40) -> None:
+    """
+    渲染终端进度条
+    """
+    if total <= 0:
+        return
+    progress = current / total
+    filled_length = int(bar_length * progress)
+    bar = '█' * filled_length + '-' * (bar_length - filled_length)
+    sys.stdout.write(f"\r{description} [{bar}] {current}/{total}")
+    sys.stdout.flush()
+    if current >= total:
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+
+
+def _progress_print(message: str) -> None:
+    """
+    在进度条场景下安全打印信息
+    """
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+    print(message)
 
 
 def encode_highway_type(highway_type: str) -> int:
@@ -71,12 +98,29 @@ def convert_route_graphs_to_pytorch(pkl_path: str) -> List[Data]:
     """
     print("加载pkl文件...")
     with open(pkl_path, 'rb') as f:
-        route_graphs = pickle.load(f)
-    
-    print("转换图数据...")
+        raw_data = pickle.load(f)
+
+    # 兼容封装成字典的最新数据格式，自动提取图列表
+    if isinstance(raw_data, dict):
+        candidate_keys = ['route_graphs', 'ego_graphs', 'graphs']
+        route_graphs = None
+        for key in candidate_keys:
+            graph_list = raw_data.get(key)
+            if isinstance(graph_list, list):
+                route_graphs = graph_list
+                print(f"检测到封装格式，使用键 '{key}' 中的 {len(route_graphs)} 个图数据")
+                break
+        if route_graphs is None:
+            raise ValueError("未在 pkl 文件中找到 route_graphs/ego_graphs 列表")
+    else:
+        route_graphs = raw_data
+
+    total_graphs = len(route_graphs)
+    print(f"转换图数据，共 {total_graphs} 个 route 图...")
     pytorch_graphs = []
+    skipped_empty = 0
     
-    for i, graph_data in enumerate(route_graphs):
+    for idx, graph_data in enumerate(route_graphs, start=1):
         nx_graph = graph_data['graph']
         node_mapping = {node: idx for idx, node in enumerate(nx_graph.nodes())}
         
@@ -114,22 +158,33 @@ def convert_route_graphs_to_pytorch(pkl_path: str) -> List[Data]:
                 edge_features.append(features)
                 edge_indices.append([node_mapping[u], node_mapping[v]])
             except (ValueError, TypeError) as e:
-                print(f"警告：跳过边 ({u}, {v})，数据转换错误: {e}")
+                _progress_print(f"警告：跳过边 ({u}, {v})，数据转换错误: {e}")
                 continue
+        
+        if len(node_features) == 0 or len(edge_indices) == 0:
+            _progress_print(f"警告：跳过图 {graph_data.get('id', idx)}，节点或边为空")
+            skipped_empty += 1
+            _render_progress("转换 route 图数据", idx, total_graphs)
+            continue
         
         # 创建Data对象
         data = Data(
             x=torch.tensor(node_features, dtype=torch.float),
             edge_index=torch.tensor(edge_indices, dtype=torch.long).t().contiguous(),
             edge_attr=torch.tensor(edge_features, dtype=torch.float),
-            graph_id=graph_data.get('id', i)
+            graph_id=graph_data.get('id', idx)
         )
+
+        if data.edge_index.numel() == 0:
+            _progress_print(f"警告：跳过图 {data.graph_id}，edge_index 为空")
+            skipped_empty += 1
+            _render_progress("转换 route 图数据", idx, total_graphs)
+            continue
+
+        _render_progress("转换 route 图数据", idx, total_graphs)
         pytorch_graphs.append(data)
-        
-        if (i + 1) % 10 == 0:
-            print(f"已处理 {i + 1}/{len(route_graphs)} 个图")
     
-    print(f"转换完成！共处理 {len(pytorch_graphs)} 个图")
+    print(f"转换完成！共处理 {len(pytorch_graphs)} 个图，跳过 {skipped_empty} 个空图")
     return pytorch_graphs
 
 def convert_ego_graphs_to_pytorch(pkl_path: str) -> List[Data]:
@@ -144,12 +199,25 @@ def convert_ego_graphs_to_pytorch(pkl_path: str) -> List[Data]:
     """
     print("加载pkl文件...")
     with open(pkl_path, 'rb') as f:
-        ego_graphs = pickle.load(f)
+        raw_data = pickle.load(f)
+
+    # Elena 最新数据可能以字典形式封装
+    if isinstance(raw_data, dict):
+        ego_graphs = raw_data.get('ego_graphs', [])
+        if not ego_graphs:
+            raise ValueError("未在数据文件中找到 'ego_graphs' 列表")
+        roads_info = raw_data.get('roads')
+        if roads_info is not None:
+            print(f"附带道路数据记录数: {len(roads_info)}")
+    else:
+        ego_graphs = raw_data
     
-    print("转换图数据...")
+    total_graphs = len(ego_graphs)
+    print(f"转换图数据，共 {total_graphs} 个 ego 图...")
     pytorch_graphs = []
+    skipped_empty = 0
     
-    for i, graph_data in enumerate(ego_graphs):
+    for idx, graph_data in enumerate(ego_graphs, start=1):
         nx_graph = graph_data['graph']
         node_mapping = {node: idx for idx, node in enumerate(nx_graph.nodes())}
         
@@ -187,22 +255,33 @@ def convert_ego_graphs_to_pytorch(pkl_path: str) -> List[Data]:
                 edge_features.append(features)
                 edge_indices.append([node_mapping[u], node_mapping[v]])
             except (ValueError, TypeError) as e:
-                print(f"警告：跳过边 ({u}, {v})，数据转换错误: {e}")
+                _progress_print(f"警告：跳过边 ({u}, {v})，数据转换错误: {e}")
                 continue
+        
+        # 过滤空图
+        if len(node_features) == 0 or len(edge_indices) == 0:
+            _progress_print(f"警告：跳过图 {graph_data.get('id', idx)}，节点或边为空")
+            skipped_empty += 1
+            _render_progress("转换 ego 图数据", idx, total_graphs)
+            continue
         
         # 创建Data对象
         data = Data(
             x=torch.tensor(node_features, dtype=torch.float),
             edge_index=torch.tensor(edge_indices, dtype=torch.long).t().contiguous(),
             edge_attr=torch.tensor(edge_features, dtype=torch.float),
-            graph_id=graph_data.get('id', i)
+            graph_id=graph_data.get('id', idx)
         )
+        if data.edge_index.numel() == 0:
+            _progress_print(f"警告：跳过图 {data.graph_id}，edge_index 为空")
+            skipped_empty += 1
+            _render_progress("转换 ego 图数据", idx, total_graphs)
+            continue
+        
+        _render_progress("转换 ego 图数据", idx, total_graphs)
         pytorch_graphs.append(data)
         
-        if (i + 1) % 10 == 0:
-            print(f"已处理 {i + 1}/{len(ego_graphs)} 个图")
-    
-    print(f"转换完成！共处理 {len(pytorch_graphs)} 个图")
+    print(f"转换完成！共处理 {len(pytorch_graphs)} 个图，跳过 {skipped_empty} 个空图")
     return pytorch_graphs
 
 
@@ -387,17 +466,33 @@ def split_data(
 
 def load_config(config_path: str) -> Dict:
     """
-    加载JSON配置文件
+    ����JSON�����ļ�
     
     Args:
-        config_path: 配置文件路径
+        config_path: �����ļ�·��
         
     Returns:
-        配置字典
+        �����ֵ�
     """
     import json
+    config_path = Path(config_path).resolve()
     with open(config_path, 'r', encoding='utf-8') as f:
         config = json.load(f)
+
+    # ��̬����paths�ֶ�，ʵ���������Ŀ¼��ת��Ϊ���·��
+    base_dir = config_path.parent
+    paths = config.get('paths')
+    if isinstance(paths, dict):
+        resolved_paths: Dict[str, str] = {}
+        for key, value in paths.items():
+            value_path = Path(value)
+            if not value_path.is_absolute():
+                value_path = (base_dir / value_path).resolve()
+            resolved_paths[key] = str(value_path)
+        config['paths'] = resolved_paths
+
+    # ��¼����Ŀ¼，������Ҫ�������ļ�ʱʹ��
+    config['_config_dir'] = str(base_dir)
     return config
 
 

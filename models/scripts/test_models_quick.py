@@ -6,6 +6,7 @@
 import torch
 import os
 from datetime import datetime
+from pathlib import Path
 
 from gae_model import create_gae_model
 from vgae_model import create_vgae_model
@@ -17,44 +18,52 @@ from autoencoder_utils import (
 )
 
 
-def test_model_forward(model_name: str, model: torch.nn.Module, test_data: list) -> bool:
+def test_model_forward(
+    model_name: str,
+    model: torch.nn.Module,
+    test_data: list,
+    device: str
+) -> bool:
     """
-    测试模型前向传播
+    ����ģ��ǰ�򴫲�
     
     Args:
-        model_name: 模型名称
-        model: 模型实例
-        test_data: 测试数据
+        model_name: ģ������
+        model: ģ��ʵ��
+        test_data: ��������
+        device: �豸
         
     Returns:
-        测试是否成功
+        �����Ƿ�ɹ�
     """
     try:
-        print(f"\n测试 {model_name} 前向传播...")
+        print(f"\n���� {model_name} ǰ�򴫲�...")
+        model = model.to(device)
         model.eval()
-        
+
         with torch.no_grad():
-            for i, graph in enumerate(test_data[:3]):  # 只测试前3个图
+            for i, graph in enumerate(test_data[:3]):  # ֻ����ǰ3��ͼ
+                graph = graph.to(device)
+
                 if model_name == "GAE":
                     graph_embedding, edge_probs = model(graph)
                 elif model_name == "VGAE":
-                    z, mu, logvar = model(graph)
-                    graph_embedding = mu
+                    graph_embedding, z, mu, logvar = model(graph)
                 elif model_name == "GraphMAE":
                     graph_embedding, node_embeddings, recon_features, mask_nodes = model(graph, use_mask=False)
-                
-                print(f"  图 {i+1}: 嵌入形状 = {graph_embedding.shape}")
-                
-                # 验证形状
-                assert graph_embedding.shape[0] == 1, f"批次维度应为1，实际为{graph_embedding.shape[0]}"
+
+                print(f"  ͼ {i+1}: Ƕ����״ = {graph_embedding.shape}")
+
+                # ��֤��״
+                assert graph_embedding.shape[0] == 1, f"����ά��ӦΪ1��ʵ��Ϊ{graph_embedding.shape[0]}"
                 assert graph_embedding.shape[1] == model.embedding_dim, \
-                    f"嵌入维度应为{model.embedding_dim}，实际为{graph_embedding.shape[1]}"
-        
-        print(f"✅ {model_name} 前向传播测试通过")
+                    f"Ƕ��ά��ӦΪ{model.embedding_dim}��ʵ��Ϊ{graph_embedding.shape[1]}"
+
+        print(f"? {model_name} ǰ�򴫲�����ͨ��")
         return True
         
     except Exception as e:
-        print(f"❌ {model_name} 前向传播测试失败: {str(e)}")
+        print(f"? {model_name} ǰ�򴫲�����ʧ��: {str(e)}")
         return False
 
 
@@ -121,13 +130,14 @@ def main() -> None:
     
     # 加载测试数据
     print("\n📊 加载测试数据...")
-    data_path = r"D:\Architecture\AAA-Master\25Fall\CAADRIA\UrbanStreetGNN\models\data\route_graphs.pkl"
-    
-    if not os.path.exists(data_path):
-        print(f"❌ 数据文件不存在: {data_path}")
-        print("请确保数据文件存在后再运行测试")
+    current_dir = Path(__file__).resolve().parent
+    data_path = (current_dir / "../data/route_graphs.pkl").resolve()
+
+    if not data_path.exists():
+        print(f"? 数据文件不存在: {data_path}")
+        print("请确认数据文件在本地后再运行")
         return
-    
+
     graphs = convert_route_graphs_to_pytorch(data_path)
     print(f"加载了 {len(graphs)} 个图，使用前5个进行测试")
     test_data = graphs[:5]
@@ -166,7 +176,7 @@ def main() -> None:
         print(f"模型参数数量: {total_params:,}")
         
         # 测试前向传播
-        forward_pass = test_model_forward(model_name, model, test_data)
+        forward_pass = test_model_forward(model_name, model, test_data, device)
         
         # 测试训练
         training_pass = test_model_training(model_name, model, test_data, device)

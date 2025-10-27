@@ -212,13 +212,20 @@ def plot_embedding_comparison(embeddings: Dict[str, Dict], save_path: str) -> No
         
         # 获取嵌入
         embeddings_tensor = emb_data['embeddings']
-        embeddings_np = embeddings_tensor.numpy()
-        
+        embeddings_np = embeddings_tensor.detach().cpu().numpy()
+
+        if embeddings_np.size == 0 or np.allclose(embeddings_np.std(axis=0), 0):
+            print(f"⚠️ {model_labels[model_name]} 嵌入方差接近 0，跳过 t-SNE 可视化")
+            ax = axes[idx]
+            ax.axis('off')
+            ax.text(0.5, 0.5, '嵌入方差≈0，无法绘制', fontsize=12, ha='center', va='center')
+            continue
+
         # t-SNE降维
         print(f"对 {model_labels[model_name]} 进行t-SNE降维...")
         tsne = TSNE(n_components=2, random_state=42, perplexity=30)
         embeddings_2d = tsne.fit_transform(embeddings_np)
-        
+
         # 绘制
         ax = axes[idx]
         scatter = ax.scatter(embeddings_2d[:, 0], embeddings_2d[:, 1], 
