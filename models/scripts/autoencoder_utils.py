@@ -59,6 +59,78 @@ def extract_node_centrality(nx_graph: nx.Graph) -> Dict[int, List[float]]:
     
     return centrality_features
 
+def convert_route_graphs_to_pytorch(pkl_path: str) -> List[Data]:
+    """
+    将route-graphs转换为PyTorch Geometric格式
+    
+    Args:
+        pkl_path: pickle文件路径
+        
+    Returns:
+        PyTorch Geometric Data对象列表
+    """
+    print("加载pkl文件...")
+    with open(pkl_path, 'rb') as f:
+        route_graphs = pickle.load(f)
+    
+    print("转换图数据...")
+    pytorch_graphs = []
+    
+    for i, graph_data in enumerate(route_graphs):
+        nx_graph = graph_data['graph']
+        node_mapping = {node: idx for idx, node in enumerate(nx_graph.nodes())}
+        
+        # 提取节点特征：忽略geometry字段
+        node_features = []
+        for node in nx_graph.nodes():
+            node_data = nx_graph.nodes[node]
+            
+            # 只提取非geometry的特征
+            features = [
+                float(node_data.get('length', 0.0)),
+                float(node_data.get('width', 0.0)),  # 转换str到float
+                float(node_data.get('height_mean', 0.0)) if not np.isnan(node_data.get('height_mean', 0.0)) else 0.0,
+                float(node_data.get('frontage_L_mean', 0.0)) if not np.isnan(node_data.get('frontage_L_mean', 0.0)) else 0.0,
+                float(node_data.get('public_den', 0.0)) if not np.isnan(node_data.get('public_den', 0.0)) else 0.0,
+                float(node_data.get('transport_den', 0.0)) if not np.isnan(node_data.get('transport_den', 0.0)) else 0.0,
+                float(node_data.get('nvdi_mean', 0.0)) if not np.isnan(node_data.get('nvdi_mean', 0.0)) else 0.0,
+                float(node_data.get('hop_level', 0.0)),
+                1.0 if node_data.get('is_center', False) else 0.0,  # bool转float
+            ]
+            node_features.append(features)
+                
+        # 提取边特征和索引：只使用坐标
+        edge_features = []
+        edge_indices = []
+        for u, v, data in nx_graph.edges(data=True):
+            try:
+                # 直接使用intersection_coords作为边特征
+                intersection_coords = data.get('intersection_coords', (0.0, 0.0))
+                
+                features = [
+                    float(intersection_coords[0]),  # x坐标
+                    float(intersection_coords[1]),  # y坐标
+                ]
+                edge_features.append(features)
+                edge_indices.append([node_mapping[u], node_mapping[v]])
+            except (ValueError, TypeError) as e:
+                print(f"警告：跳过边 ({u}, {v})，数据转换错误: {e}")
+                continue
+        
+        # 创建Data对象
+        data = Data(
+            x=torch.tensor(node_features, dtype=torch.float),
+            edge_index=torch.tensor(edge_indices, dtype=torch.long).t().contiguous(),
+            edge_attr=torch.tensor(edge_features, dtype=torch.float),
+            graph_id=graph_data.get('id', i)
+        )
+        pytorch_graphs.append(data)
+        
+        if (i + 1) % 10 == 0:
+            print(f"已处理 {i + 1}/{len(route_graphs)} 个图")
+    
+    print(f"转换完成！共处理 {len(pytorch_graphs)} 个图")
+    return pytorch_graphs
 
 def convert_ego_graphs_to_pytorch(pkl_path: str) -> List[Data]:
     """
@@ -81,15 +153,22 @@ def convert_ego_graphs_to_pytorch(pkl_path: str) -> List[Data]:
         nx_graph = graph_data['graph']
         node_mapping = {node: idx for idx, node in enumerate(nx_graph.nodes())}
         
-        # 提取节点特征：度数 + 中心性
+        # 提取节点特征：根据route_graphs的实际字段调整
         node_features = []
         for node in nx_graph.nodes():
-            degree = nx_graph.nodes[node]['degree']
-            centrality = nx_graph.nodes[node]['centrality']
+            node_data = nx_graph.nodes[node]
             
+            # 根据实际字段提取特征
             features = [
-                degree,
-                centrality,
+                float(node_data.get('length', 0.0)),
+                float(node_data.get('width', 0.0)),  # 转换str到float
+                float(node_data.get('height_mean', 0.0)),
+                float(node_data.get('frontage_L_mean', 0.0)),
+                float(node_data.get('public_den', 0.0)),
+                float(node_data.get('transport_den', 0.0)),
+                float(node_data.get('nvdi_mean', 0.0)),
+                float(node_data.get('hop_level', 0.0)),
+                1.0 if node_data.get('is_center', False) else 0.0,  # bool转float
             ]
             node_features.append(features)
                 
@@ -98,14 +177,12 @@ def convert_ego_graphs_to_pytorch(pkl_path: str) -> List[Data]:
         edge_indices = []
         for u, v, data in nx_graph.edges(data=True):
             try:
-                highway_encoded = encode_highway_type(data.get('highway', 'unknown'))
-                width = float(data.get('width', 0.0))
-                length = float(data.get('length', 0.0))
+                # 直接使用intersection_coords作为边特征
+                intersection_coords = data.get('intersection_coords', (0.0, 0.0))
                 
                 features = [
-                    highway_encoded,
-                    width,
-                    length
+                    float(intersection_coords[0]),  # x坐标
+                    float(intersection_coords[1]),  # y坐标
                 ]
                 edge_features.append(features)
                 edge_indices.append([node_mapping[u], node_mapping[v]])

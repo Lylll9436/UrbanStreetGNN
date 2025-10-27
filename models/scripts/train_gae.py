@@ -12,7 +12,7 @@ from typing import Dict, List, Tuple
 
 from gae_model import create_gae_model
 from autoencoder_utils import (
-    convert_ego_graphs_to_pytorch,
+    convert_route_graphs_to_pytorch,
     split_data,
     load_config,
     compute_link_prediction_metrics,
@@ -110,7 +110,7 @@ def train_gae(config: Dict) -> None:
         print(f"❌ 数据文件不存在: {data_path}")
         return
     
-    graphs = convert_ego_graphs_to_pytorch(data_path)
+    graphs = convert_route_graphs_to_pytorch(data_path)
     
     # 划分数据集
     print("\n📊 步骤2: 划分数据集")
@@ -256,7 +256,7 @@ def train_gae(config: Dict) -> None:
 def main() -> None:
     """主函数"""
     # 加载配置
-    config_path = "../config/gae_config.json"
+    config_path = r"D:\Architecture\AAA-Master\25Fall\CAADRIA\UrbanStreetGNN\models\config\gae_config.json"   
     config = load_config(config_path)
     
     # 训练模型
