@@ -165,11 +165,14 @@ def convert_route_graphs_to_pytorch(pkl_path: str) -> List[Data]:
             node_data = nx_graph.nodes[node]
             length_value = _safe_float(node_data.get('length', 0.0))
             frontage_raw = _safe_float(node_data.get('frontage_L_mean', 0.0))
-            if length_value > 0:
-                # 将沿街立面长度转换为单位道路长度占比，并限制在 [0, 1]，仍沿用原字段表示占比
-                frontage_l_mean = min(max(frontage_raw / length_value, 0.0), 1.0)
+            if frontage_raw <= 1.0:
+                frontage_l_mean = frontage_raw
             else:
-                frontage_l_mean = 0.0
+                if length_value > 0:
+                    # 大于 1 的原始数值表示总长度，需按道路长度换算成占比并截断至 [0, 1]
+                    frontage_l_mean = min(max(frontage_raw / length_value, 0.0), 1.0)
+                else:
+                    frontage_l_mean = 1.0
             features = [
                 length_value,
                 _safe_float(node_data.get('width', 0.0)),
@@ -331,10 +334,13 @@ def convert_ego_graphs_to_pytorch(pkl_path: str) -> List[Data]:
             
             length_value = _safe_float(node_data.get('length', 0.0))
             frontage_raw = _safe_float(node_data.get('frontage_L_mean', 0.0))
-            if length_value > 0:
-                frontage_l_mean = min(max(frontage_raw / length_value, 0.0), 1.0)
+            if frontage_raw <= 1.0:
+                frontage_l_mean = frontage_raw
             else:
-                frontage_l_mean = 0.0
+                if length_value > 0:
+                    frontage_l_mean = min(max(frontage_raw / length_value, 0.0), 1.0)
+                else:
+                    frontage_l_mean = 1.0
 
             features = [
                 length_value,
