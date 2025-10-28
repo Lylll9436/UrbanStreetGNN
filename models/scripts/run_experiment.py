@@ -62,7 +62,7 @@ def check_data_files():
     print("检查数据文件...")
     
     required_files = [
-        "../data/ego_graphs.pkl",
+        "../data/route_graphs.pkl",
         "edge_embedding.py"
     ]
     
@@ -154,8 +154,8 @@ def generate_report():
 - 优化器: Adam
 
 数据信息:
-- 数据源: ../data/ego_graphs.pkl
-- 图数量: 100个ego-graph
+- 数据源: ../data/route_graphs.pkl
+- 图数量: 1749个route-graph
 - 覆盖城市: 北京、上海、深圳、重庆、成都、西安、香港
 
 输出文件:

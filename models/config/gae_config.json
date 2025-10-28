@@ -6,20 +6,20 @@
     "node_features": 9,
     "edge_features": 2,
     "hidden_dim": 256,
-    "embedding_dim": 128,
-    "num_layers": 3,
+    "embedding_dim": 96,
+    "num_layers": 2,
     "dropout": 0.2,
-    "conv_type": "gcn"
+    "conv_type": "gat"
   },
   
   "training": {
-    "num_epochs": 100,
-    "learning_rate": 0.001,
-    "weight_decay": 1e-5,
-    "batch_size": 1,
+    "num_epochs": 200,
+    "learning_rate": 2e-4,
+    "weight_decay": 1e-4,
+    "batch_size": 128,
     "train_ratio": 0.8,
     "val_ratio": 0.2,
-    "seed": 42
+    "seed": 26
   },
   
   "optimizer": {
@@ -27,8 +27,8 @@
     "lr_scheduler": "ReduceLROnPlateau",
     "scheduler_params": {
       "mode": "min",
-      "factor": 0.5,
-      "patience": 10,
+      "factor": 0.3,
+      "patience": 7,
       "verbose": true
     }
   },
@@ -44,7 +44,7 @@
   },
   
   "paths": {
-    "data": "../data/ego_graphs.pkl",
+    "data": "../data/route_graphs.pkl",
     "model_save": "../gnn_models/gae_model.pt",
     "best_model_save": "../gnn_models/best_gae_model.pt",
     "embeddings_save": "../data/gae_embeddings.pt",

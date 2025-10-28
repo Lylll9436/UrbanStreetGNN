@@ -7,20 +7,21 @@
     "edge_features": 2,
     "hidden_dim": 256,
     "embedding_dim": 128,
-    "num_layers": 3,
-    "dropout": 0.2,
+    "num_layers": 2,
+    "dropout": 0.3,
     "conv_type": "gcn"
   },
   
   "training": {
-    "num_epochs": 100,
-    "learning_rate": 0.001,
+    "num_epochs": 200,
+    "learning_rate": 0.0005,
     "weight_decay": 1e-5,
-    "batch_size": 1,
+    "batch_size": 64,
     "train_ratio": 0.8,
     "val_ratio": 0.2,
-    "seed": 42,
-    "kl_weight": 0.1
+    "seed": 26,
+    "kl_weight": 0.1,
+    "val_interval": 10
   },
   
   "optimizer": {
@@ -28,8 +29,8 @@
     "lr_scheduler": "ReduceLROnPlateau",
     "scheduler_params": {
       "mode": "min",
-      "factor": 0.5,
-      "patience": 10,
+      "factor": 0.3,
+      "patience": 5,
       "verbose": true
     }
   },
@@ -51,7 +52,7 @@
   },
   
   "paths": {
-    "data": "../data/ego_graphs.pkl",
+    "data": "../data/route_graphs.pkl",
     "model_save": "../gnn_models/vgae_model.pt",
     "best_model_save": "../gnn_models/best_vgae_model.pt",
     "embeddings_save": "../data/vgae_embeddings.pt",

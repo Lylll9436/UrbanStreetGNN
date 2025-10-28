@@ -6,6 +6,7 @@ GraphMAE (Graph Masked AutoEncoder) 模型实现
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 from torch_geometric.nn import GCNConv, GATConv, SAGEConv
 from torch_geometric.nn import global_mean_pool, global_max_pool
 from torch_geometric.data import Data
@@ -239,7 +240,10 @@ class GraphMAEModel(nn.Module):
         Returns:
             被掩码的节点索引
         """
-        num_mask = int(num_nodes * mask_ratio)
+        if num_nodes == 0:
+            return torch.empty(0, dtype=torch.long)
+        num_mask = max(1, int(num_nodes * mask_ratio))
+        num_mask = min(num_mask, num_nodes)
         mask_indices = torch.randperm(num_nodes)[:num_mask]
         return mask_indices
     
@@ -294,6 +298,26 @@ class GraphMAEModel(nn.Module):
         edge_probs = torch.sigmoid(edge_logits)
         
         return edge_probs
+
+    @staticmethod
+    def _fallback_negative_edges(
+        num_nodes: int,
+        target: int,
+        device: torch.device,
+        dtype: torch.dtype
+    ) -> torch.Tensor:
+        """
+        当负采样为空时，生成自环作为负样本
+        """
+        if num_nodes == 0:
+            return torch.empty((2, 0), dtype=dtype, device=device)
+        loops = torch.arange(num_nodes, device=device, dtype=dtype)
+        neg_edge_index = torch.stack([loops, loops], dim=0)
+        target = max(target, 1)
+        if neg_edge_index.size(1) < target:
+            repeat = math.ceil(target / neg_edge_index.size(1))
+            neg_edge_index = neg_edge_index.repeat(1, repeat)
+        return neg_edge_index[:, :target]
     
     def forward(
         self,
@@ -384,13 +408,24 @@ class GraphMAEModel(nn.Module):
                 num_nodes=data.x.size(0),
                 num_neg_samples=pos_edge_index.size(1)
             )
+
+        if neg_edge_index is None or neg_edge_index.numel() == 0:
+            neg_edge_index = self._fallback_negative_edges(
+                num_nodes=data.x.size(0),
+                target=pos_edge_index.size(1),
+                device=pos_edge_index.device,
+                dtype=pos_edge_index.dtype
+            )
         
         # 解码负样本
         neg_edge_probs = self.decode_links(node_embeddings, neg_edge_index)
         
         # BCE损失
         pos_loss = -torch.log(pos_edge_probs + 1e-15).mean()
-        neg_loss = -torch.log(1 - neg_edge_probs + 1e-15).mean()
+        if neg_edge_probs.numel() == 0:
+            neg_loss = pos_loss.new_tensor(0.0)
+        else:
+            neg_loss = -torch.log(1 - neg_edge_probs + 1e-15).mean()
         
         return pos_loss + neg_loss
     

@@ -6,22 +6,23 @@
     "node_features": 9,
     "edge_features": 2,
     "hidden_dim": 256,
-    "embedding_dim": 128,
-    "num_layers": 3,
-    "dropout": 0.2,
-    "conv_type": "gcn",
-    "mask_ratio": 0.15
+    "embedding_dim": 96,
+    "num_layers": 2,
+    "dropout": 0.117,
+    "conv_type": "gat",
+    "mask_ratio": 0.1
   },
   
   "training": {
-    "num_epochs": 100,
-    "learning_rate": 0.001,
-    "weight_decay": 1e-5,
-    "batch_size": 1,
+    "num_epochs": 200,
+    "learning_rate": 4e-4,
+    "weight_decay": 3e-5,
+    "batch_size": 128,
     "train_ratio": 0.8,
     "val_ratio": 0.2,
-    "seed": 42,
-    "link_weight": 0.3
+    "seed": 26,
+    "link_weight": 0.017,
+    "val_interval": 10
   },
   
   "optimizer": {
@@ -29,8 +30,8 @@
     "lr_scheduler": "ReduceLROnPlateau",
     "scheduler_params": {
       "mode": "min",
-      "factor": 0.5,
-      "patience": 10,
+      "factor": 0.4,
+      "patience": 5,
       "verbose": true
     }
   },
@@ -39,7 +40,7 @@
     "type": "masked_reconstruction",
     "description": "特征重建损失 + 链接预测损失",
     "feature_weight": 1.0,
-    "link_weight": 0.3
+    "link_weight": 0.1
   },
   
   "masking": {
@@ -55,7 +56,7 @@
   },
   
   "paths": {
-    "data": "../data/ego_graphs.pkl",
+    "data": "../data/route_graphs.pkl",
     "model_save": "../gnn_models/graphmae_model.pt",
     "best_model_save": "../gnn_models/best_graphmae_model.pt",
     "embeddings_save": "../data/graphmae_embeddings.pt",

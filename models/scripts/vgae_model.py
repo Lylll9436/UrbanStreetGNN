@@ -6,6 +6,7 @@ VGAE (Variational Graph AutoEncoder) 模型实现
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 from torch_geometric.nn import GCNConv, GATConv, SAGEConv
 from torch_geometric.nn import global_mean_pool, global_max_pool
 from torch_geometric.data import Data
@@ -270,6 +271,26 @@ class VGAEModel(nn.Module):
         z = self.reparameterize(mu, logvar)
         graph_embedding = self._graph_readout(z)
         return graph_embedding, z, mu, logvar
+
+    @staticmethod
+    def _fallback_negative_edges(
+        num_nodes: int,
+        target: int,
+        device: torch.device,
+        dtype: torch.dtype
+    ) -> torch.Tensor:
+        """
+        当负采样为空时，构造自环作为负样本
+        """
+        if num_nodes == 0:
+            return torch.empty((2, 0), dtype=dtype, device=device)
+        loops = torch.arange(num_nodes, device=device, dtype=dtype)
+        neg_edge_index = torch.stack([loops, loops], dim=0)
+        target = max(target, 1)
+        if neg_edge_index.size(1) < target:
+            repeat = math.ceil(target / neg_edge_index.size(1))
+            neg_edge_index = neg_edge_index.repeat(1, repeat)
+        return neg_edge_index[:, :target]
     
     def kl_loss(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
         """
@@ -320,13 +341,24 @@ class VGAEModel(nn.Module):
                 num_nodes=num_nodes,
                 num_neg_samples=pos_edge_index.size(1)
             )
+
+        if neg_edge_index is None or neg_edge_index.numel() == 0:
+            neg_edge_index = self._fallback_negative_edges(
+                num_nodes=num_nodes,
+                target=pos_edge_index.size(1),
+                device=pos_edge_index.device,
+                dtype=pos_edge_index.dtype
+            )
         
         # 解码负样本
         neg_edge_probs = self.decode(z, neg_edge_index)
         
         # 二元交叉熵损失
         pos_loss = -torch.log(pos_edge_probs + 1e-15).mean()
-        neg_loss = -torch.log(1 - neg_edge_probs + 1e-15).mean()
+        if neg_edge_probs.numel() == 0:
+            neg_loss = pos_loss.new_tensor(0.0)
+        else:
+            neg_loss = -torch.log(1 - neg_edge_probs + 1e-15).mean()
         
         return pos_loss + neg_loss
     

@@ -5,6 +5,7 @@
 
 import pickle
 import sys
+import math
 import torch
 import torch.nn.functional as F
 from torch_geometric.data import Data
@@ -13,9 +14,15 @@ from torch_geometric.nn import global_mean_pool, global_max_pool
 import networkx as nx
 import numpy as np
 import matplotlib.pyplot as plt
-from typing import Dict, List, Tuple, Optional
+from typing import Any, Dict, List, Tuple, Optional
 from pathlib import Path
-from sklearn.metrics import roc_auc_score, average_precision_score, precision_score, accuracy_score
+from sklearn.metrics import (
+    roc_auc_score,
+    average_precision_score,
+    precision_score,
+    accuracy_score,
+    roc_curve
+)
 
 
 def _render_progress(description: str, current: int, total: int, bar_length: int = 40) -> None:
@@ -41,6 +48,26 @@ def _progress_print(message: str) -> None:
     sys.stdout.write("\n")
     sys.stdout.flush()
     print(message)
+
+
+def _safe_float(value, default: float = 0.0) -> float:
+    """
+    安全地将任意值转换为float；若遇到None/非法字符串/NaN则返回默认值
+    """
+    if value is None:
+        return default
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped == "" or stripped.lower() in {"nan", "none", "null"}:
+            return default
+        value = stripped
+    try:
+        float_value = float(value)
+    except (TypeError, ValueError):
+        return default
+    if not np.isfinite(float_value):
+        return default
+    return float_value
 
 
 def encode_highway_type(highway_type: str) -> int:
@@ -117,71 +144,132 @@ def convert_route_graphs_to_pytorch(pkl_path: str) -> List[Data]:
 
     total_graphs = len(route_graphs)
     print(f"转换图数据，共 {total_graphs} 个 route 图...")
-    pytorch_graphs = []
+    pytorch_graphs: List[Data] = []
     skipped_empty = 0
+
+    processed_graphs: List[Dict[str, Any]] = []
+    feature_sum = np.zeros(9, dtype=np.float64)
+    feature_sq_sum = np.zeros(9, dtype=np.float64)
+    edge_sum = np.zeros(2, dtype=np.float64)
+    edge_sq_sum = np.zeros(2, dtype=np.float64)
+    total_nodes = 0
+    total_edges = 0
     
     for idx, graph_data in enumerate(route_graphs, start=1):
         nx_graph = graph_data['graph']
+        is_directed = nx_graph.is_directed()
         node_mapping = {node: idx for idx, node in enumerate(nx_graph.nodes())}
         
-        # 提取节点特征：忽略geometry字段
-        node_features = []
+        node_features_list: List[List[float]] = []
         for node in nx_graph.nodes():
             node_data = nx_graph.nodes[node]
-            
-            # 只提取非geometry的特征
             features = [
-                float(node_data.get('length', 0.0)),
-                float(node_data.get('width', 0.0)),  # 转换str到float
-                float(node_data.get('height_mean', 0.0)) if not np.isnan(node_data.get('height_mean', 0.0)) else 0.0,
-                float(node_data.get('frontage_L_mean', 0.0)) if not np.isnan(node_data.get('frontage_L_mean', 0.0)) else 0.0,
-                float(node_data.get('public_den', 0.0)) if not np.isnan(node_data.get('public_den', 0.0)) else 0.0,
-                float(node_data.get('transport_den', 0.0)) if not np.isnan(node_data.get('transport_den', 0.0)) else 0.0,
-                float(node_data.get('nvdi_mean', 0.0)) if not np.isnan(node_data.get('nvdi_mean', 0.0)) else 0.0,
-                float(node_data.get('hop_level', 0.0)),
-                1.0 if node_data.get('is_center', False) else 0.0,  # bool转float
+                _safe_float(node_data.get('length', 0.0)),
+                _safe_float(node_data.get('width', 0.0)),
+                _safe_float(node_data.get('height_mean', 0.0)),
+                _safe_float(node_data.get('frontage_L_mean', 0.0)),
+                _safe_float(node_data.get('public_den', 0.0)),
+                _safe_float(node_data.get('transport_den', 0.0)),
+                _safe_float(node_data.get('nvdi_mean', 0.0)),
+                _safe_float(node_data.get('hop_level', 0.0)),
+                1.0 if bool(node_data.get('is_center', False)) else 0.0,
             ]
-            node_features.append(features)
+            node_features_list.append(features)
                 
-        # 提取边特征和索引：只使用坐标
-        edge_features = []
-        edge_indices = []
+        edge_features_list: List[List[float]] = []
+        edge_indices_list: List[List[int]] = []
         for u, v, data in nx_graph.edges(data=True):
             try:
-                # 直接使用intersection_coords作为边特征
                 intersection_coords = data.get('intersection_coords', (0.0, 0.0))
-                
-                features = [
-                    float(intersection_coords[0]),  # x坐标
-                    float(intersection_coords[1]),  # y坐标
-                ]
-                edge_features.append(features)
-                edge_indices.append([node_mapping[u], node_mapping[v]])
+                if isinstance(intersection_coords, (list, tuple)) and len(intersection_coords) >= 2:
+                    x_coord = _safe_float(intersection_coords[0])
+                    y_coord = _safe_float(intersection_coords[1])
+                else:
+                    x_coord = 0.0
+                    y_coord = 0.0
+                features = [x_coord, y_coord]
+                edge_features_list.append(features.copy())
+                edge_indices_list.append([node_mapping[u], node_mapping[v]])
+
+                if not is_directed:
+                    edge_features_list.append(features.copy())
+                    edge_indices_list.append([node_mapping[v], node_mapping[u]])
             except (ValueError, TypeError) as e:
                 _progress_print(f"警告：跳过边 ({u}, {v})，数据转换错误: {e}")
                 continue
         
-        if len(node_features) == 0 or len(edge_indices) == 0:
+        if len(node_features_list) == 0 or len(edge_indices_list) == 0:
             _progress_print(f"警告：跳过图 {graph_data.get('id', idx)}，节点或边为空")
             skipped_empty += 1
             _render_progress("转换 route 图数据", idx, total_graphs)
             continue
         
-        # 创建Data对象
-        data = Data(
-            x=torch.tensor(node_features, dtype=torch.float),
-            edge_index=torch.tensor(edge_indices, dtype=torch.long).t().contiguous(),
-            edge_attr=torch.tensor(edge_features, dtype=torch.float),
-            graph_id=graph_data.get('id', idx)
-        )
+        node_array = np.array(node_features_list, dtype=np.float32)
+        edge_array = np.array(edge_features_list, dtype=np.float32)
+        edge_indices_array = np.array(edge_indices_list, dtype=np.int64)
 
-        if data.edge_index.numel() == 0:
-            _progress_print(f"警告：跳过图 {data.graph_id}，edge_index 为空")
-            skipped_empty += 1
-            _render_progress("转换 route 图数据", idx, total_graphs)
-            continue
+        feature_sum += node_array.sum(axis=0)
+        feature_sq_sum += np.square(node_array).sum(axis=0)
+        total_nodes += node_array.shape[0]
+
+        if edge_array.size > 0:
+            edge_sum += edge_array.sum(axis=0)
+            edge_sq_sum += np.square(edge_array).sum(axis=0)
+            total_edges += edge_array.shape[0]
+
+        processed_graphs.append({
+            'graph_id': graph_data.get('id', idx),
+            'node_features': node_array,
+            'edge_features': edge_array,
+            'edge_indices': edge_indices_array
+        })
 
         _render_progress("转换 route 图数据", idx, total_graphs)
+    
+    if total_nodes == 0:
+        print("⚠️ 未找到有效的图数据，返回空列表")
+        return pytorch_graphs
+
+    node_means = feature_sum / total_nodes
+    node_sq_means = feature_sq_sum / total_nodes
+    node_vars = np.maximum(node_sq_means - np.square(node_means), 1e-12)
+    node_stds = np.sqrt(node_vars)
+
+    if total_edges > 0:
+        edge_means = edge_sum / total_edges
+        edge_sq_means = edge_sq_sum / total_edges
+        edge_vars = np.maximum(edge_sq_means - np.square(edge_means), 1e-12)
+        edge_stds = np.sqrt(edge_vars)
+    else:
+        edge_means = np.zeros(2, dtype=np.float32)
+        edge_stds = np.ones(2, dtype=np.float32)
+
+    node_means_tensor = torch.from_numpy(node_means.astype(np.float32))
+    node_stds_tensor = torch.from_numpy(node_stds.astype(np.float32))
+    edge_means_tensor = torch.from_numpy(edge_means.astype(np.float32))
+    edge_stds_tensor = torch.from_numpy(edge_stds.astype(np.float32))
+
+    for info in processed_graphs:
+        node_tensor = torch.from_numpy(info['node_features'])
+        node_tensor = (node_tensor - node_means_tensor) / node_stds_tensor
+        node_tensor = torch.nan_to_num(node_tensor, nan=0.0, posinf=0.0, neginf=0.0)
+
+        edge_tensor = torch.from_numpy(info['edge_features'])
+        if edge_tensor.numel() > 0:
+            edge_tensor = (edge_tensor - edge_means_tensor) / edge_stds_tensor
+            edge_tensor = torch.nan_to_num(edge_tensor, nan=0.0, posinf=0.0, neginf=0.0)
+        else:
+            edge_tensor = torch.empty((0, edge_means_tensor.numel()), dtype=torch.float32)
+
+        edge_index_tensor = torch.from_numpy(info['edge_indices']).t().contiguous().long()
+
+        data = Data(
+            x=node_tensor.float(),
+            edge_index=edge_index_tensor,
+            edge_attr=edge_tensor.float(),
+            graph_id=info['graph_id']
+        )
+
         pytorch_graphs.append(data)
     
     print(f"转换完成！共处理 {len(pytorch_graphs)} 个图，跳过 {skipped_empty} 个空图")
@@ -214,71 +302,133 @@ def convert_ego_graphs_to_pytorch(pkl_path: str) -> List[Data]:
     
     total_graphs = len(ego_graphs)
     print(f"转换图数据，共 {total_graphs} 个 ego 图...")
-    pytorch_graphs = []
+    pytorch_graphs: List[Data] = []
     skipped_empty = 0
+
+    processed_graphs: List[Dict[str, Any]] = []
+    feature_sum = np.zeros(9, dtype=np.float64)
+    feature_sq_sum = np.zeros(9, dtype=np.float64)
+    edge_sum = np.zeros(2, dtype=np.float64)
+    edge_sq_sum = np.zeros(2, dtype=np.float64)
+    total_nodes = 0
+    total_edges = 0
     
     for idx, graph_data in enumerate(ego_graphs, start=1):
         nx_graph = graph_data['graph']
+        is_directed = nx_graph.is_directed()
         node_mapping = {node: idx for idx, node in enumerate(nx_graph.nodes())}
         
-        # 提取节点特征：根据route_graphs的实际字段调整
-        node_features = []
+        node_features_list: List[List[float]] = []
         for node in nx_graph.nodes():
             node_data = nx_graph.nodes[node]
             
-            # 根据实际字段提取特征
             features = [
-                float(node_data.get('length', 0.0)),
-                float(node_data.get('width', 0.0)),  # 转换str到float
-                float(node_data.get('height_mean', 0.0)),
-                float(node_data.get('frontage_L_mean', 0.0)),
-                float(node_data.get('public_den', 0.0)),
-                float(node_data.get('transport_den', 0.0)),
-                float(node_data.get('nvdi_mean', 0.0)),
-                float(node_data.get('hop_level', 0.0)),
-                1.0 if node_data.get('is_center', False) else 0.0,  # bool转float
+                _safe_float(node_data.get('length', 0.0)),
+                _safe_float(node_data.get('width', 0.0)),
+                _safe_float(node_data.get('height_mean', 0.0)),
+                _safe_float(node_data.get('frontage_L_mean', 0.0)),
+                _safe_float(node_data.get('public_den', 0.0)),
+                _safe_float(node_data.get('transport_den', 0.0)),
+                _safe_float(node_data.get('nvdi_mean', 0.0)),
+                _safe_float(node_data.get('hop_level', 0.0)),
+                1.0 if bool(node_data.get('is_center', False)) else 0.0,
             ]
-            node_features.append(features)
+            node_features_list.append(features)
                 
-        # 提取边特征和索引
-        edge_features = []
-        edge_indices = []
+        edge_features_list: List[List[float]] = []
+        edge_indices_list: List[List[int]] = []
         for u, v, data in nx_graph.edges(data=True):
             try:
-                # 直接使用intersection_coords作为边特征
                 intersection_coords = data.get('intersection_coords', (0.0, 0.0))
-                
-                features = [
-                    float(intersection_coords[0]),  # x坐标
-                    float(intersection_coords[1]),  # y坐标
-                ]
-                edge_features.append(features)
-                edge_indices.append([node_mapping[u], node_mapping[v]])
+                if isinstance(intersection_coords, (list, tuple)) and len(intersection_coords) >= 2:
+                    x_coord = _safe_float(intersection_coords[0])
+                    y_coord = _safe_float(intersection_coords[1])
+                else:
+                    x_coord = 0.0
+                    y_coord = 0.0
+                features = [x_coord, y_coord]
+                edge_features_list.append(features.copy())
+                edge_indices_list.append([node_mapping[u], node_mapping[v]])
+
+                if not is_directed:
+                    edge_features_list.append(features.copy())
+                    edge_indices_list.append([node_mapping[v], node_mapping[u]])
             except (ValueError, TypeError) as e:
                 _progress_print(f"警告：跳过边 ({u}, {v})，数据转换错误: {e}")
                 continue
         
-        # 过滤空图
-        if len(node_features) == 0 or len(edge_indices) == 0:
+        if len(node_features_list) == 0 or len(edge_indices_list) == 0:
             _progress_print(f"警告：跳过图 {graph_data.get('id', idx)}，节点或边为空")
             skipped_empty += 1
             _render_progress("转换 ego 图数据", idx, total_graphs)
             continue
         
-        # 创建Data对象
-        data = Data(
-            x=torch.tensor(node_features, dtype=torch.float),
-            edge_index=torch.tensor(edge_indices, dtype=torch.long).t().contiguous(),
-            edge_attr=torch.tensor(edge_features, dtype=torch.float),
-            graph_id=graph_data.get('id', idx)
-        )
-        if data.edge_index.numel() == 0:
-            _progress_print(f"警告：跳过图 {data.graph_id}，edge_index 为空")
-            skipped_empty += 1
-            _render_progress("转换 ego 图数据", idx, total_graphs)
-            continue
-        
+        node_array = np.array(node_features_list, dtype=np.float32)
+        edge_array = np.array(edge_features_list, dtype=np.float32)
+        edge_indices_array = np.array(edge_indices_list, dtype=np.int64)
+
+        feature_sum += node_array.sum(axis=0)
+        feature_sq_sum += np.square(node_array).sum(axis=0)
+        total_nodes += node_array.shape[0]
+
+        if edge_array.size > 0:
+            edge_sum += edge_array.sum(axis=0)
+            edge_sq_sum += np.square(edge_array).sum(axis=0)
+            total_edges += edge_array.shape[0]
+
+        processed_graphs.append({
+            'graph_id': graph_data.get('id', idx),
+            'node_features': node_array,
+            'edge_features': edge_array,
+            'edge_indices': edge_indices_array
+        })
+
         _render_progress("转换 ego 图数据", idx, total_graphs)
+        
+    if total_nodes == 0:
+        print("⚠️ 未找到有效的图数据，返回空列表")
+        return pytorch_graphs
+
+    node_means = feature_sum / total_nodes
+    node_sq_means = feature_sq_sum / total_nodes
+    node_vars = np.maximum(node_sq_means - np.square(node_means), 1e-12)
+    node_stds = np.sqrt(node_vars)
+
+    if total_edges > 0:
+        edge_means = edge_sum / total_edges
+        edge_sq_means = edge_sq_sum / total_edges
+        edge_vars = np.maximum(edge_sq_means - np.square(edge_means), 1e-12)
+        edge_stds = np.sqrt(edge_vars)
+    else:
+        edge_means = np.zeros(2, dtype=np.float32)
+        edge_stds = np.ones(2, dtype=np.float32)
+
+    node_means_tensor = torch.from_numpy(node_means.astype(np.float32))
+    node_stds_tensor = torch.from_numpy(node_stds.astype(np.float32))
+    edge_means_tensor = torch.from_numpy(edge_means.astype(np.float32))
+    edge_stds_tensor = torch.from_numpy(edge_stds.astype(np.float32))
+
+    for info in processed_graphs:
+        node_tensor = torch.from_numpy(info['node_features'])
+        node_tensor = (node_tensor - node_means_tensor) / node_stds_tensor
+        node_tensor = torch.nan_to_num(node_tensor, nan=0.0, posinf=0.0, neginf=0.0)
+
+        edge_tensor = torch.from_numpy(info['edge_features'])
+        if edge_tensor.numel() > 0:
+            edge_tensor = (edge_tensor - edge_means_tensor) / edge_stds_tensor
+            edge_tensor = torch.nan_to_num(edge_tensor, nan=0.0, posinf=0.0, neginf=0.0)
+        else:
+            edge_tensor = torch.empty((0, edge_means_tensor.numel()), dtype=torch.float32)
+
+        edge_index_tensor = torch.from_numpy(info['edge_indices']).t().contiguous().long()
+
+        data = Data(
+            x=node_tensor.float(),
+            edge_index=edge_index_tensor,
+            edge_attr=edge_tensor.float(),
+            graph_id=info['graph_id']
+        )
+        
         pytorch_graphs.append(data)
         
     print(f"转换完成！共处理 {len(pytorch_graphs)} 个图，跳过 {skipped_empty} 个空图")
@@ -314,8 +464,19 @@ def compute_link_prediction_metrics(
     auc = roc_auc_score(labels, preds)
     ap = average_precision_score(labels, preds)
     
-    # 二值化预测（阈值0.5）
-    binary_preds = (preds > 0.5).astype(int)
+    # 根据 Youden Index 自适应选择阈值
+    try:
+        fpr, tpr, thresholds = roc_curve(labels, preds)
+        if thresholds.size > 0:
+            youden_index = tpr - fpr
+            best_idx = youden_index.argmax()
+            best_threshold = thresholds[best_idx]
+        else:
+            best_threshold = 0.5
+    except ValueError:
+        best_threshold = 0.5
+
+    binary_preds = (preds > best_threshold).astype(int)
     
     # 计算Precision和Accuracy
     precision = precision_score(labels, binary_preds, zero_division=0)
@@ -357,6 +518,19 @@ def get_pos_neg_edges(
         num_nodes=num_nodes,
         num_neg_samples=num_neg_samples
     )
+
+    if neg_edge_index.numel() == 0 and num_nodes > 0:
+        device = edge_index.device if edge_index.is_cuda else torch.device("cpu")
+        loops = torch.arange(num_nodes, device=device, dtype=edge_index.dtype)
+        if loops.numel() == 0:
+            neg_edge_index = torch.empty((2, 0), dtype=edge_index.dtype, device=device)
+        else:
+            neg_edge_index = torch.stack([loops, loops], dim=0)
+            target = max(num_neg_samples, 1)
+            if neg_edge_index.size(1) < target:
+                repeat = math.ceil(target / neg_edge_index.size(1))
+                neg_edge_index = neg_edge_index.repeat(1, repeat)
+            neg_edge_index = neg_edge_index[:, :target]
     
     return pos_edge_index, neg_edge_index
 
