@@ -163,11 +163,18 @@ def convert_route_graphs_to_pytorch(pkl_path: str) -> List[Data]:
         node_features_list: List[List[float]] = []
         for node in nx_graph.nodes():
             node_data = nx_graph.nodes[node]
+            length_value = _safe_float(node_data.get('length', 0.0))
+            frontage_raw = _safe_float(node_data.get('frontage_L_mean', 0.0))
+            if length_value > 0:
+                # 将沿街立面长度转换为单位道路长度占比，并限制在 [0, 1]，仍沿用原字段表示占比
+                frontage_l_mean = min(max(frontage_raw / length_value, 0.0), 1.0)
+            else:
+                frontage_l_mean = 0.0
             features = [
-                _safe_float(node_data.get('length', 0.0)),
+                length_value,
                 _safe_float(node_data.get('width', 0.0)),
                 _safe_float(node_data.get('height_mean', 0.0)),
-                _safe_float(node_data.get('frontage_L_mean', 0.0)),
+                frontage_l_mean,
                 _safe_float(node_data.get('public_den', 0.0)),
                 _safe_float(node_data.get('transport_den', 0.0)),
                 _safe_float(node_data.get('nvdi_mean', 0.0)),
@@ -322,11 +329,18 @@ def convert_ego_graphs_to_pytorch(pkl_path: str) -> List[Data]:
         for node in nx_graph.nodes():
             node_data = nx_graph.nodes[node]
             
+            length_value = _safe_float(node_data.get('length', 0.0))
+            frontage_raw = _safe_float(node_data.get('frontage_L_mean', 0.0))
+            if length_value > 0:
+                frontage_l_mean = min(max(frontage_raw / length_value, 0.0), 1.0)
+            else:
+                frontage_l_mean = 0.0
+
             features = [
-                _safe_float(node_data.get('length', 0.0)),
+                length_value,
                 _safe_float(node_data.get('width', 0.0)),
                 _safe_float(node_data.get('height_mean', 0.0)),
-                _safe_float(node_data.get('frontage_L_mean', 0.0)),
+                frontage_l_mean,
                 _safe_float(node_data.get('public_den', 0.0)),
                 _safe_float(node_data.get('transport_den', 0.0)),
                 _safe_float(node_data.get('nvdi_mean', 0.0)),
