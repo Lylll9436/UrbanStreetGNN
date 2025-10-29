@@ -173,12 +173,15 @@ def convert_route_graphs_to_pytorch(pkl_path: str) -> List[Data]:
                     frontage_l_mean = min(max(frontage_raw / length_value, 0.0), 1.0)
                 else:
                     frontage_l_mean = 1.0
+            poi_entropy = _safe_float(
+                node_data.get('poi_entropy', node_data.get('public_den', 0.0))
+            )
             features = [
                 length_value,
                 _safe_float(node_data.get('width', 0.0)),
                 _safe_float(node_data.get('height_mean', 0.0)),
                 frontage_l_mean,
-                _safe_float(node_data.get('public_den', 0.0)),
+                poi_entropy,
                 _safe_float(node_data.get('transport_den', 0.0)),
                 _safe_float(node_data.get('nvdi_mean', 0.0)),
                 _safe_float(node_data.get('hop_level', 0.0)),
@@ -342,12 +345,15 @@ def convert_ego_graphs_to_pytorch(pkl_path: str) -> List[Data]:
                 else:
                     frontage_l_mean = 1.0
 
+            poi_entropy = _safe_float(
+                node_data.get('poi_entropy', node_data.get('public_den', 0.0))
+            )
             features = [
                 length_value,
                 _safe_float(node_data.get('width', 0.0)),
                 _safe_float(node_data.get('height_mean', 0.0)),
                 frontage_l_mean,
-                _safe_float(node_data.get('public_den', 0.0)),
+                poi_entropy,
                 _safe_float(node_data.get('transport_den', 0.0)),
                 _safe_float(node_data.get('nvdi_mean', 0.0)),
                 _safe_float(node_data.get('hop_level', 0.0)),
