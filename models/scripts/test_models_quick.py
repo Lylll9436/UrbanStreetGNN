@@ -131,7 +131,7 @@ def main() -> None:
     # 加载测试数据
     print("\n📊 加载测试数据...")
     current_dir = Path(__file__).resolve().parent
-    data_path = (current_dir / "../data/route_graphs.pkl").resolve()
+    data_path = (current_dir / "../data/route_graphs_filtered.pkl").resolve()
 
     if not data_path.exists():
         print(f"? 数据文件不存在: {data_path}")
