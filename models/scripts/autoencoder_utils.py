@@ -113,6 +113,28 @@ def extract_node_centrality(nx_graph: nx.Graph) -> Dict[int, List[float]]:
     
     return centrality_features
 
+def encode_highway_type(highway_type: str) -> float:
+    """
+    编码道路类型为数值
+    
+    Args:
+        highway_type: 道路类型字符串
+        
+    Returns:
+        编码后的浮点数值（归一化到 [0, 1]）
+    """
+    # 扩展类型映射，支持更多类型
+    type_mapping = {
+        'primary': 1.0,
+        'secondary': 2.0,
+        'street': 3.0,
+        'internal': 4.0,
+    }
+    # 归一化到 [0, 1] 范围
+    encoded = type_mapping.get(str(highway_type).lower(), 0.0)
+    max_value = max(type_mapping.values()) if type_mapping.values() else 1.0
+    return encoded / max_value if max_value > 0 else 0.0
+
 def convert_route_graphs_to_pytorch(pkl_path: str) -> List[Data]:
     """
     将route-graphs转换为PyTorch Geometric格式
@@ -148,8 +170,8 @@ def convert_route_graphs_to_pytorch(pkl_path: str) -> List[Data]:
     skipped_empty = 0
 
     processed_graphs: List[Dict[str, Any]] = []
-    feature_sum = np.zeros(9, dtype=np.float64)
-    feature_sq_sum = np.zeros(9, dtype=np.float64)
+    feature_sum = np.zeros(12, dtype=np.float64)
+    feature_sq_sum = np.zeros(12, dtype=np.float64)
     edge_sum = np.zeros(2, dtype=np.float64)
     edge_sq_sum = np.zeros(2, dtype=np.float64)
     total_nodes = 0
@@ -173,16 +195,33 @@ def convert_route_graphs_to_pytorch(pkl_path: str) -> List[Data]:
                     frontage_l_mean = min(max(frontage_raw / length_value, 0.0), 1.0)
                 else:
                     frontage_l_mean = 1.0
+            poi_entropy = _safe_float(
+                node_data.get('poi_entropy', node_data.get('public_den', 0.0))
+            )
+
+            # 编码 highway 特征
+            highway_raw = node_data.get('highway', '')
+            if isinstance(highway_raw, str):
+                highway_encoded = encode_highway_type(highway_raw)
+            else:
+                highway_encoded = encode_highway_type(str(highway_raw))
+
+
+            # 12个特征，按顺序：length, width, highway, height_mean, frontage_L_mean, 
+            # transport_den, nvdi_mean, hop_level, is_center, poi_entropy, linearity, geom_vertex_count
             features = [
-                length_value,
-                _safe_float(node_data.get('width', 0.0)),
-                _safe_float(node_data.get('height_mean', 0.0)),
-                frontage_l_mean,
-                _safe_float(node_data.get('public_den', 0.0)),
-                _safe_float(node_data.get('transport_den', 0.0)),
-                _safe_float(node_data.get('nvdi_mean', 0.0)),
-                _safe_float(node_data.get('hop_level', 0.0)),
-                1.0 if bool(node_data.get('is_center', False)) else 0.0,
+                length_value,                                          # 1. length
+                _safe_float(node_data.get('width', 0.0)),             # 2. width
+                highway_encoded,                                       # 3. highway (编码后)
+                _safe_float(node_data.get('height_mean', 0.0)),       # 4. height_mean
+                frontage_l_mean,                                       # 5. frontage_L_mean
+                _safe_float(node_data.get('transport_den', 0.0)),      # 6. transport_den
+                _safe_float(node_data.get('nvdi_mean', 0.0)),          # 7. nvdi_mean
+                _safe_float(node_data.get('hop_level', 0.0)),          # 8. hop_level
+                1.0 if bool(node_data.get('is_center', False)) else 0.0,  # 9. is_center
+                poi_entropy,                                          # 10. poi_entropy
+                _safe_float(node_data.get('linearity', 0.0)),          # 11. linearity
+                _safe_float(node_data.get('geom_vertex_count', 0.0)),  # 12. geom_vertex_count
             ]
             node_features_list.append(features)
                 
@@ -342,12 +381,15 @@ def convert_ego_graphs_to_pytorch(pkl_path: str) -> List[Data]:
                 else:
                     frontage_l_mean = 1.0
 
+            poi_entropy = _safe_float(
+                node_data.get('poi_entropy', node_data.get('public_den', 0.0))
+            )
             features = [
                 length_value,
                 _safe_float(node_data.get('width', 0.0)),
                 _safe_float(node_data.get('height_mean', 0.0)),
                 frontage_l_mean,
-                _safe_float(node_data.get('public_den', 0.0)),
+                poi_entropy,
                 _safe_float(node_data.get('transport_den', 0.0)),
                 _safe_float(node_data.get('nvdi_mean', 0.0)),
                 _safe_float(node_data.get('hop_level', 0.0)),

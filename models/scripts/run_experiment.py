@@ -62,7 +62,7 @@ def check_data_files():
     print("检查数据文件...")
     
     required_files = [
-        "../data/route_graphs.pkl",
+        "../data/route_graphs_filtered.pkl",
         "edge_embedding.py"
     ]
     
@@ -154,7 +154,7 @@ def generate_report():
 - 优化器: Adam
 
 数据信息:
-- 数据源: ../data/route_graphs.pkl
+- 数据源: ../data/route_graphs_filtered.pkl
 - 图数量: 1749个route-graph
 - 覆盖城市: 北京、上海、深圳、重庆、成都、西安、香港
 
