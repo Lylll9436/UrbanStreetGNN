@@ -1,5 +1,5 @@
 {
-  "node_features": 9,
+  "node_features": 12,
   "edge_features": 2,
   "hidden_dim": 256,
   "embedding_dim": 128,

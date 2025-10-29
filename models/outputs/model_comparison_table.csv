@@ -1,4 +1,0 @@
-Model,Final Train Loss,Final Val Loss,Best Val Precision,Best Val Accuracy,Best Val AUC,Best Val AP,Final Val Precision,Final Val Accuracy,Final Val AUC
-GAE,1.3863,1.3863,0.5000,0.5000,0.5000,0.5000,0.0000,0.5000,0.5000
-VGAE,1.3863,1.3863,0.5000,0.5000,0.5000,0.5000,0.0000,0.5000,0.5000
-GRAPHMAE,0.4169,0.4159,0.5000,0.5000,0.5000,0.5000,0.0000,0.5000,0.5000
